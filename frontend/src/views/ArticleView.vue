@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import ArticleTopBar from '@/components/organisms/ArticleTopBar.vue'
 import ArticleSidebar from '@/components/organisms/ArticleSidebar.vue'
@@ -8,11 +8,14 @@ import ExtendSection from '@/components/molecules/ExtendSection.vue'
 import EntryEditModal from '@/components/molecules/EntryEditModal.vue'
 import ExtendModal from '@/components/molecules/ExtendModal.vue'
 import AddModal from '@/components/molecules/AddModal.vue'
+import TableOfContents from '@/components/molecules/TableOfContents.vue'
 import AppTag from '@/components/atoms/AppTag.vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import { useReadProgress } from '@/composables/useReadProgress'
+import { useTableOfContents } from '@/composables/useTableOfContents'
 import { useTopicsStore } from '@/stores/topics'
 import { useEntriesStore } from '@/stores/entries'
+import { useRouter } from 'vue-router'
 import type { ArticleDetail, Backlink, RelatedEntry, SourceFile } from '@/data/mock'
 import { getEntry, getBacklinks, getRelated, getAttachments } from '@/api/entries'
 import type { ArticleDetailOut, BacklinkOut, RelatedEntryOut, AttachmentOut } from '@/api/entries'
@@ -20,6 +23,7 @@ import type { ArticleDetailOut, BacklinkOut, RelatedEntryOut, AttachmentOut } fr
 marked.use({ breaks: true })
 
 const props = defineProps<{ id: string }>()
+const router = useRouter()
 
 const topicsStore = useTopicsStore()
 const entriesStore = useEntriesStore()
@@ -40,14 +44,39 @@ const topic = computed(() =>
   article.value ? topicsStore.topics.find((t) => t.id === article.value!.topicId) : null,
 )
 
+const { headings, activeSlug, observe, scrollTo } = useTableOfContents(
+  computed(() => article.value?.body)
+)
+
 // Render body: pre-process [[Title]] then run through marked
+// Post-process to inject heading IDs for TOC anchor links
 const renderedBody = computed(() => {
   const raw = article.value?.body ?? ''
   const withRefs = raw.replace(
     /\[\[(.+?)\]\]/g,
     '<span class="backlink-ref">$1</span>',
   )
-  return marked(withRefs) as string
+  let html = marked(withRefs) as string
+  // Inject id attributes into heading tags
+  const slugMap = new Map<string, number>()
+  html = html.replace(/<(h[1-6])>([^<]+)<\/\1>/g, (_match, tag, text) => {
+    let slug = text
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .substring(0, 64)
+    const count = slugMap.get(slug) ?? 0
+    slugMap.set(slug, count + 1)
+    if (count > 0) slug = `${slug}-${count}`
+    return `<${tag} id="${slug}">${text}</${tag}>`
+  })
+  return html
+})
+
+watch(renderedBody, () => {
+  nextTick(() => {
+    if (scrollEl.value) observe(scrollEl.value)
+  })
 })
 
 function formatBytes(b: number): string {
@@ -80,6 +109,7 @@ function mapArticle(e: ArticleDetailOut): ArticleDetail {
     tags: e.tags,
     date: e.date,
     source: e.source ?? '',
+    sourceUrl: e.source_url ?? undefined,
     wordCount: e.word_count,
     readTime: `${e.read_time_min} min read`,
     backlinkCount: e.backlink_count,
@@ -155,18 +185,29 @@ function onPasteExcerpt() {
 }
 
 const scrollEl = ref<HTMLElement | null>(null)
-const { progress } = useReadProgress(scrollEl)
+const heroEl = ref<HTMLElement | null>(null)
+const heroHeight = ref(0)
+
+function updateHeroHeight() {
+  if (heroEl.value) {
+    heroHeight.value = heroEl.value.offsetHeight
+  }
+}
+
+const { progress } = useReadProgress(scrollEl, heroHeight)
+
+onMounted(() => {
+  updateHeroHeight()
+  window.addEventListener('resize', updateHeroHeight)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateHeroHeight)
+})
 </script>
 
 <template>
   <div class="flex flex-col h-screen overflow-hidden bg-surface">
-    <!-- Read progress bar -->
-    <div
-      class="fixed top-0 left-0 h-[2px] bg-accent z-50 transition-[width] duration-100 ease-linear"
-      :style="{ width: `${progress}%` }"
-      aria-hidden="true"
-    />
-
     <ArticleTopBar
       v-if="article"
       :article="article"
@@ -188,7 +229,7 @@ const { progress } = useReadProgress(scrollEl)
       <!-- Main scrollable column -->
       <main ref="scrollEl" class="flex-1 overflow-y-auto min-w-0">
         <!-- Hero image -->
-        <div class="relative overflow-hidden border-b border-line" style="aspect-ratio: 16/7">
+        <div ref="heroEl" class="relative overflow-hidden border-b border-line" style="aspect-ratio: 16/7">
           <img
             v-if="article.imgUrl"
             :src="article.imgUrl"
@@ -208,8 +249,29 @@ const { progress } = useReadProgress(scrollEl)
           />
         </div>
 
-        <!-- Article inner -->
-        <div class="max-w-article mx-auto px-8 pb-20">
+        <!-- Read progress bar (below hero, starts when hero scrolls out) -->
+        <div class="h-[3px] bg-surface-2 w-full">
+          <div
+            class="h-full bg-accent transition-[width] duration-100 ease-linear"
+            :style="{ width: `${progress}%` }"
+            aria-hidden="true"
+          />
+        </div>
+
+        <!-- Article inner with TOC -->
+        <div class="flex justify-center">
+          <!-- Table of contents (wide screens only) -->
+          <aside class="hidden 2xl:block w-[220px] flex-shrink-0 pl-8 pt-8">
+            <div class="sticky top-8">
+              <TableOfContents
+                :headings="headings"
+                :active-slug="activeSlug"
+                @navigate="(slug) => scrollTo(slug, scrollEl!)"
+              />
+            </div>
+          </aside>
+
+          <div class="max-w-article w-full px-8 pb-20">
           <!-- Article header -->
           <div class="pt-8 pb-6 border-b border-line mb-7">
             <!-- Topic chip -->
@@ -246,9 +308,18 @@ const { progress } = useReadProgress(scrollEl)
                 <AppIcon name="edit" :size="12" />
                 {{ article.date }}
               </span>
-              <span v-if="article.source" class="ml-auto text-[11px] italic text-ink-3">
-                {{ article.source }}
-              </span>
+            <a
+              v-if="article.sourceUrl"
+              :href="article.sourceUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="ml-auto text-[11px] italic text-accent hover:underline truncate max-w-[240px]"
+            >
+              {{ article.source }}
+            </a>
+            <span v-else-if="article.source" class="ml-auto text-[11px] italic text-ink-3">
+              {{ article.source }}
+            </span>
             </div>
 
             <!-- Tags -->
@@ -268,6 +339,7 @@ const { progress } = useReadProgress(scrollEl)
             @paste-excerpt="onPasteExcerpt"
           />
         </div>
+        </div>
       </main>
 
       <!-- Right sidebar -->
@@ -281,6 +353,7 @@ const { progress } = useReadProgress(scrollEl)
         @edit-entry="showEditModal = true"
         @related-changed="refreshRelated"
         @draft-extension="onDraftExtension"
+        @deleted="router.push('/')"
       />
     </div>
 
