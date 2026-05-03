@@ -1,0 +1,71 @@
+# Development stack — hot-reload, source mounts, no .env required
+# Usage:
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Frontend:  http://localhost:5173   (Vite dev server)
+# Backend:   http://localhost:8000   (uvicorn --reload)
+# Postgres:  localhost:5432          (user: khoarder, pass: dev, db: knowledge_hoarder)
+#
+# Uploaded files are persisted in ./storage on the host.
+# Database data is stored in the named volume postgres_data_dev.
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount source so Vite picks up changes without rebuilding the image.
+      # node_modules stay inside the container (installed during build).
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tailwind.config.ts:/app/tailwind.config.ts
+      - ./frontend/postcss.config.js:/app/postcss.config.js
+    environment:
+      # Browser makes API requests directly to the exposed backend port.
+      # Must include /api so the client's base URL resolves correctly.
+      VITE_API_BASE: http://localhost:8000/api
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount app package only; uvicorn --reload watches for .py changes.
+      - ./backend/app:/app/app
+      # Persist uploaded files on the host so they survive container restarts.
+      - ./storage:/storage
+    environment:
+      DATABASE_URL: postgresql+asyncpg://khoarder:dev@db/knowledge_hoarder
+      STORAGE_PATH: /storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: knowledge_hoarder
+      POSTGRES_USER: khoarder
+      POSTGRES_PASSWORD: dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U khoarder -d knowledge_hoarder"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data_dev:

@@ -1,0 +1,215 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  :root {
+    --bg:           oklch(97% 0.008 65);
+    --bg-2:         oklch(94% 0.010 65);
+    --bg-3:         oklch(91% 0.012 65);
+    --border:       oklch(86% 0.012 65);
+    --border-hover: oklch(78% 0.012 65);
+    --text:         oklch(16% 0.010 60);
+    --text-2:       oklch(38% 0.010 60);
+    --text-3:       oklch(56% 0.010 60);
+    --accent:       oklch(40% 0.075 200);
+    --accent-bg:    oklch(94% 0.020 200);
+    --danger:       oklch(45% 0.14 25);
+    --danger-bg:    oklch(96% 0.02 25);
+  }
+
+  html,
+  body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #app {
+    height: 100%;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 9px;
+  }
+}
+
+@layer components {
+  /* ── Sidebar layout shell ──────────────────────────────────── */
+  .sidebar {
+    width: 236px;
+    min-width: 236px;
+    height: 100vh;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: transform 0.26s ease, width 0.26s ease, min-width 0.26s ease;
+    z-index: 40;
+  }
+
+  .sidebar.sidebar-collapsed {
+    width: 0;
+    min-width: 0;
+    transform: translateX(-100%);
+  }
+
+  @media (max-width: 767px) {
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+    }
+  }
+
+  /* ── Sidebar nav item ─────────────────────────────────────── */
+  .sidebar-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .sidebar-item:hover {
+    background: var(--bg-3);
+    color: var(--text);
+  }
+
+  .sidebar-item.active {
+    background: var(--bg-3);
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .sidebar-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    width: 2px;
+    height: 24px;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+  }
+
+  /* ── Article prose ────────────────────────────────────────── */
+  .article-prose {
+    font-size: 15.5px;
+    line-height: 1.75;
+    color: var(--text-2);
+  }
+
+  .article-prose p {
+    margin-bottom: 1.25rem;
+  }
+
+  .article-prose h2 {
+    font-family: 'DM Serif Display', Georgia, serif;
+    font-size: 22px;
+    color: var(--text);
+    margin-top: 2.25rem;
+    margin-bottom: 0.875rem;
+    line-height: 1.3;
+  }
+
+  .article-prose h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-top: 1.75rem;
+    margin-bottom: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .article-prose blockquote {
+    border-left: 2px solid var(--accent);
+    margin: 1.5rem 0;
+    padding: 0.5rem 0 0.5rem 1.25rem;
+    font-style: italic;
+    color: var(--text-2);
+  }
+
+  .article-prose .inline-ref {
+    color: var(--accent);
+    border-bottom: 1px solid oklch(40% 0.075 200 / 0.3);
+    cursor: pointer;
+  }
+
+  .article-prose em {
+    font-style: italic;
+  }
+}
+
+/* ── Backlink references ─────────────────────────────────────── */
+.backlink-ref {
+  display: inline-flex;
+  align-items: center;
+  background: oklch(40% 0.075 200 / 0.10);
+  color: oklch(40% 0.075 200);
+  border: 1px solid oklch(40% 0.075 200 / 0.25);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 0.88em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* ── Vue transitions ────────────────────────────────────────── */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
