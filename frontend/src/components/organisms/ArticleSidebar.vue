@@ -23,6 +23,7 @@ const emit = defineEmits<{
   'edit-entry': []
   'related-changed': []
   'draft-extension': [text: string]
+  deleted: []
 }>()
 
 const router = useRouter()
@@ -64,9 +65,10 @@ async function handleDelete() {
   deleting.value = true
   try {
     await deleteEntry(props.entryId)
-    router.back()
+    emit('deleted')
   } catch {
     deleteConfirm.value = false
+  } finally {
     deleting.value = false
   }
 }

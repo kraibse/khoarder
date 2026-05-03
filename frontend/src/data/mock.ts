@@ -34,6 +34,7 @@ export interface ArticleDetail extends Entry {
   imgColor: string
   imgUrl?: string
   source: string
+  sourceUrl?: string
   isStarred: boolean
 }
 

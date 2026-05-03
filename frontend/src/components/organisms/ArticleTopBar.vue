@@ -68,6 +68,16 @@ async function toggleStar() {
       >
         <AppIcon :name="isStarred ? 'star-filled' : 'star'" :size="15" />
       </button>
+      <a
+        v-if="article.sourceUrl"
+        :href="article.sourceUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="h-8 w-8 rounded-[7px] flex items-center justify-center text-ink-2 hover:bg-surface-2 hover:text-ink transition-colors"
+        title="Visit source"
+      >
+        <AppIcon name="link" :size="15" />
+      </a>
       <IconButton icon="copy" label="Copy link" />
       <IconButton icon="share" label="Share" />
       <div class="w-px h-5 bg-line mx-0.5" />
