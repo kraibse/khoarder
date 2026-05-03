@@ -283,6 +283,253 @@ async def _classify_entry(db: AsyncSession, title: str, excerpt: str, body: str)
         return None, None
 
 
+async def extract_url_content(url: str) -> dict:
+    """Fetch and extract content from a URL. Returns dict with title, excerpt, body, has_img, img_url."""
+    import re
+    from html.parser import HTMLParser
+    from urllib.parse import urlparse
+    import httpx
+
+    title = url
+    excerpt = ""
+    article_body = ""
+    has_img = False
+    img_url = None
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+            resp = await client.get(url, headers={"User-Agent": "KnowledgeHoarder/1.0"})
+            resp.raise_for_status()
+            html = resp.text
+
+        # Extract <title>
+        m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+        if m:
+            title = m.group(1).strip()
+
+        # Extract <meta name="description">
+        m = re.search(
+            r'<meta\s[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+            html, re.IGNORECASE
+        )
+        if not m:
+            m = re.search(
+                r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']description["\']',
+                html, re.IGNORECASE
+            )
+        if m:
+            excerpt = m.group(1).strip()
+
+        # Extract og:image
+        m = re.search(
+            r'<meta\s[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
+            html, re.IGNORECASE
+        )
+        if not m:
+            m = re.search(
+                r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*property=["\']og:image["\']',
+                html, re.IGNORECASE
+            )
+        if m:
+            has_img = True
+            img_url = m.group(1).strip()
+
+        # Extract body text from paragraphs
+        is_wikipedia = "wikipedia.org" in url or "wikimedia.org" in url
+
+        # Simple HTML tag stripper
+        class TagStripper(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.text_parts: list[str] = []
+                self.skip = 0
+                self.in_paragraph = False
+                self.in_heading = False
+                self.heading_level = 0
+
+            def handle_starttag(self, tag, attrs):
+                attrs_dict = dict(attrs)
+                if tag in ("script", "style", "nav", "footer", "header", "aside"):
+                    self.skip += 1
+                elif tag == "p":
+                    self.in_paragraph = True
+                    if is_wikipedia:
+                        class_attr = attrs_dict.get("class", "")
+                        if any(c in class_attr for c in ("reference", "navbox", "infobox", "mw-empty-elt")):
+                            self.in_paragraph = False
+                elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                    self.in_heading = True
+                    self.heading_level = int(tag[1])
+                elif tag in ("br", "div"):
+                    self.text_parts.append("\n")
+
+            def handle_endtag(self, tag):
+                if tag in ("script", "style", "nav", "footer", "header", "aside"):
+                    self.skip -= 1
+                elif tag == "p":
+                    if self.in_paragraph and self.skip == 0:
+                        self.text_parts.append("\n\n")
+                    self.in_paragraph = False
+                elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                    if self.in_heading and self.skip == 0:
+                        self.text_parts.append("\n\n")
+                    self.in_heading = False
+                    self.heading_level = 0
+
+            def handle_data(self, data):
+                if self.skip != 0:
+                    return
+                if self.in_heading:
+                    prefix = "#" * self.heading_level + " "
+                    if not self.text_parts or self.text_parts[-1].endswith("\n"):
+                        self.text_parts.append(prefix + data)
+                    else:
+                        self.text_parts.append(data)
+                elif self.in_paragraph:
+                    self.text_parts.append(data)
+
+            def get_text(self) -> str:
+                return re.sub(r"\n\s*\n", "\n\n", "".join(self.text_parts)).strip()
+
+        stripper = TagStripper()
+        feed = html
+        if is_wikipedia:
+            content_match = re.search(
+                r'<div[^>]*id=["\']mw-content-text["\'][^>]*>(.*?)</div>\s*(?:<div[^>]*class=["\']catlinks["\']|<div[^>]*id=["\']mw-data-after-content["\']|</body>)',
+                html, re.IGNORECASE | re.DOTALL
+            )
+            if content_match:
+                feed = content_match.group(1)
+
+        stripper.feed(feed)
+        article_body = stripper.get_text()
+
+        if len(article_body) < 100 and not is_wikipedia:
+            paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", html, re.IGNORECASE | re.DOTALL)
+            cleaned = []
+            for p in paragraphs:
+                txt = re.sub(r"<[^>]+>", "", p)
+                txt = re.sub(r"\s+", " ", txt).strip()
+                if len(txt) > 40:
+                    cleaned.append(txt)
+            article_body = "\n\n".join(cleaned)
+
+    except Exception:
+        title = urlparse(url).hostname or url
+
+    if not excerpt and article_body:
+        first_para = article_body.split("\n\n")[0].strip()
+        if len(first_para) > 20:
+            excerpt = first_para[:280]
+
+    return {
+        "title": title,
+        "excerpt": excerpt,
+        "body": article_body,
+        "has_img": has_img,
+        "img_url": img_url,
+    }
+
+
+async def suggest_topic(
+    db: AsyncSession,
+    title: str,
+    excerpt: str,
+    body: str,
+    feedback: str | None = None,
+) -> dict | None:
+    """Use LM Studio to suggest a topic without creating it. Returns dict with name, description, color, is_new or None."""
+    import logging
+    import random
+    import re
+    from app.core.config import settings
+    from app.services import config as config_svc
+    from app.models.topic import Topic
+
+    logger = logging.getLogger(__name__)
+
+    base_url = await config_svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
+    if not base_url or not base_url.strip():
+        return None
+
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            base_url=base_url.rstrip("/") + "/",
+            api_key="not-needed",
+            timeout=float(await config_svc.get_config_value(db, "llm_timeout", default=str(settings.llm_timeout))),
+        )
+        model = await config_svc.get_config_value(db, "llm_model", default=settings.llm_model)
+
+        # Get existing topics
+        topics_result = await db.execute(select(Topic).order_by(Topic.name))
+        topics = topics_result.scalars().all()
+        topic_list = ", ".join([f"{t.name}" for t in topics]) if topics else "none"
+
+        feedback_text = f"\nUser feedback on previous suggestion: {feedback}\nPlease consider this feedback.\n" if feedback else ""
+
+        prompt = (
+            f"You are a knowledge organizer. Given a knowledge entry, classify it into one of these existing topics: {topic_list}\n\n"
+            f"If none fit well, suggest a NEW topic with a concise name (2-4 words), a short one-sentence description, and a color from this list: "
+            f"teal, green, red, purple, yellow, pink, orange, blue, brown, cyan, magenta, lime.\n\n"
+            f"Title: {title}\n"
+            f"Excerpt: {excerpt}\n"
+            f"Body: {body[:800]}..."
+            f"{feedback_text}\n\n"
+            f"Respond in this exact format:\n"
+            f"NAME: <topic name>\n"
+            f"DESCRIPTION: <one sentence description>\n"
+            f"COLOR: <color name>\n"
+            f"IS_NEW: <yes or no>"
+        )
+
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=120,
+        )
+        raw_content = response.choices[0].message.content
+        if not raw_content:
+            logger.warning("LM Studio returned empty topic suggestion")
+            return None
+
+        # Parse response
+        name_match = re.search(r"NAME:\s*(.+)", raw_content, re.IGNORECASE)
+        desc_match = re.search(r"DESCRIPTION:\s*(.+)", raw_content, re.IGNORECASE)
+        color_match = re.search(r"COLOR:\s*(.+)", raw_content, re.IGNORECASE)
+        is_new_match = re.search(r"IS_NEW:\s*(yes|no)", raw_content, re.IGNORECASE)
+
+        suggested_name = name_match.group(1).strip() if name_match else ""
+        if not suggested_name:
+            logger.warning("Could not parse topic name from LM Studio response")
+            return None
+
+        suggested_lower = suggested_name.lower()
+        for t in topics:
+            if t.name.lower() == suggested_lower:
+                return {"name": t.name, "description": t.description or "", "color": t.color, "is_new": False}
+
+        # New topic
+        description = desc_match.group(1).strip() if desc_match else ""
+        color_name = (color_match.group(1).strip() if color_match else "teal").lower()
+        is_new = is_new_match.group(1).lower() == "yes" if is_new_match else True
+
+        # Map color names to oklch values
+        color_map = {
+            "teal": "oklch(72% 0.08 200)", "green": "oklch(65% 0.10 160)", "red": "oklch(68% 0.07 30)",
+            "purple": "oklch(60% 0.09 280)", "yellow": "oklch(74% 0.06 80)", "pink": "oklch(62% 0.11 320)",
+            "orange": "oklch(70% 0.08 120)", "blue": "oklch(67% 0.09 240)", "brown": "oklch(75% 0.05 50)",
+            "cyan": "oklch(63% 0.10 190)", "magenta": "oklch(71% 0.07 340)", "lime": "oklch(66% 0.08 100)",
+        }
+        color = color_map.get(color_name, random.choice(list(color_map.values())))
+
+        return {"name": suggested_name, "description": description, "color": color, "is_new": is_new}
+    except Exception as exc:
+        logger.warning("Topic suggestion failed: %s", exc)
+        return None
+
+
 async def create_entry(
     db: AsyncSession,
     topic_id: str | None,
@@ -296,10 +543,48 @@ async def create_entry(
     img_url: str | None = None,
     is_starred: bool = False,
     tag_names: list[str] | None = None,
+    topic_suggestion: dict | None = None,
 ) -> ArticleDetailOut:
     # Auto-categorize if no topic provided (treat empty string as null)
     if not topic_id:
-        topic_id, _ = await _classify_entry(db, title, excerpt, body)
+        if topic_suggestion:
+            # Use user-approved suggestion
+            from app.models.topic import Topic
+            import re
+            suggested_lower = topic_suggestion["name"].lower()
+            topics_result = await db.execute(select(Topic).order_by(Topic.name))
+            existing = None
+            for t in topics_result.scalars().all():
+                if t.name.lower() == suggested_lower:
+                    existing = t
+                    break
+            if existing:
+                topic_id = existing.id
+            else:
+                slug = re.sub(r'[^\w\s-]', '', suggested_lower).strip()
+                slug = re.sub(r'[-\s]+', '-', slug)[:64]
+                if not slug:
+                    slug = "topic"
+                base_slug = slug
+                counter = 1
+                while True:
+                    existing_slug = await db.execute(select(Topic).where(Topic.slug == slug))
+                    if existing_slug.scalar_one_or_none() is None:
+                        break
+                    slug = f"{base_slug}-{counter}"
+                    counter += 1
+                new_topic = Topic(
+                    id=str(uuid.uuid4()),
+                    slug=slug,
+                    name=topic_suggestion["name"],
+                    color=topic_suggestion.get("color", _IMG_COLORS[0]),
+                    description=topic_suggestion.get("description", ""),
+                )
+                db.add(new_topic)
+                await db.flush()
+                topic_id = new_topic.id
+        else:
+            topic_id, _ = await _classify_entry(db, title, excerpt, body)
 
     entry_id = str(uuid.uuid4())
     color = _IMG_COLORS[int(entry_id.replace("-", ""), 16) % len(_IMG_COLORS)]

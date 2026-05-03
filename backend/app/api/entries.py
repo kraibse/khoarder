@@ -13,7 +13,10 @@ from app.schemas.entry import (
     EntryOut,
     EntryUpdate,
     RelatedEntryOut,
+    TopicPreviewRequest,
+    TopicSuggestionOut,
     URLImportRequest,
+    URLPreviewOut,
 )
 from app.schemas.attachment import AttachmentOut
 from app.services import entries as svc
@@ -76,37 +79,46 @@ async def create_entry(body: EntryCreate, db: AsyncSession = Depends(get_db)):
         img_url=body.img_url,
         is_starred=body.is_starred,
         tag_names=body.tags,
+        topic_suggestion=body.topic_suggestion.model_dump() if body.topic_suggestion else None,
+    )
+
+
+@router.post("/preview-import-url", response_model=URLPreviewOut)
+async def preview_import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db)):
+    extracted = await svc.extract_url_content(body.url)
+    suggestion = None
+    if not body.topic_id:
+        suggestion = await svc.suggest_topic(
+            db, extracted["title"], extracted["excerpt"], extracted["body"]
+        )
+    return URLPreviewOut(
+        title=extracted["title"],
+        excerpt=extracted["excerpt"],
+        body=extracted["body"],
+        has_img=extracted["has_img"],
+        img_url=extracted["img_url"],
+        suggestion=TopicSuggestionOut(**suggestion) if suggestion else None,
     )
 
 
 @router.post("/import-url", response_model=ArticleDetailOut, status_code=201)
 async def import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db)):
-    import re
-    from html.parser import HTMLParser
-    from urllib.parse import urlparse
-
-    title = body.url
-    excerpt = ""
-    article_body = ""
-    has_img = False
-    img_height = 200
-
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
-            resp = await client.get(body.url, headers={"User-Agent": "KnowledgeHoarder/1.0"})
-            resp.raise_for_status()
-            html = resp.text
-
-        # Extract <title>
-        m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
-        if m:
-            title = m.group(1).strip()
-
-        # Extract <meta name="description">
-        m = re.search(
-            r'<meta\s[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE
-        )
+    extracted = await svc.extract_url_content(body.url)
+    entry_type = "Article" if len(extracted["body"]) > 200 else "Reference"
+    return await svc.create_entry(
+        db,
+        topic_id=body.topic_id,
+        entry_type=entry_type,
+        title=extracted["title"],
+        excerpt=extracted["excerpt"],
+        body=extracted["body"],
+        source_url=body.url,
+        source_label=None,
+        has_img=extracted["has_img"],
+        img_url=extracted["img_url"],
+        tag_names=[],
+        topic_suggestion=body.topic_suggestion.model_dump() if body.topic_suggestion else None,
+    )
         if not m:
             m = re.search(
                 r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']description["\']',
@@ -292,6 +304,14 @@ async def delete_entry(entry_id: str, db: AsyncSession = Depends(get_db)):
     deleted = await svc.delete_entry(db, entry_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Entry not found")
+
+
+@router.post("/preview-topic", response_model=TopicSuggestionOut)
+async def preview_topic(body: TopicPreviewRequest, db: AsyncSession = Depends(get_db)):
+    result = await svc.suggest_topic(db, body.title, body.excerpt, body.body, body.feedback)
+    if result is None:
+        raise HTTPException(status_code=503, detail="Topic suggestion unavailable — check LM Studio connection")
+    return TopicSuggestionOut(**result)
 
 
 @router.get("/{entry_id}/suggestions", response_model=list[RelatedEntryOut])

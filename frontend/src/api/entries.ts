@@ -87,6 +87,12 @@ export const getAllTags = () => apiFetch<string[]>('/tags')
 
 // ── Write ─────────────────────────────────────────────────────────────────────
 
+export interface TopicSuggestionCreate {
+  name: string
+  description?: string
+  color: string
+}
+
 export interface EntryCreate {
   topic_id: string | null
   type?: string
@@ -96,6 +102,7 @@ export interface EntryCreate {
   source_url?: string | null
   source_label?: string | null
   tags?: string[]
+  topic_suggestion?: TopicSuggestionCreate
 }
 
 export interface EntryUpdate {
@@ -128,10 +135,45 @@ export const deleteEntry = (id: string) =>
 export const getSuggestions = (id: string) =>
   apiFetch<RelatedEntryOut[]>(`/entries/${id}/suggestions`)
 
-export const importUrl = (topic_id: string | null, url: string) =>
-  apiFetch<ArticleDetailOut>('/entries/import-url', {
+export interface TopicSuggestionOut {
+  name: string
+  description: string
+  color: string
+  is_new: boolean
+}
+
+export interface TopicPreviewRequest {
+  title: string
+  excerpt?: string
+  body?: string
+  feedback?: string | null
+}
+
+export interface URLPreviewOut {
+  title: string
+  excerpt: string
+  body: string
+  has_img: boolean
+  img_url: string | null
+  suggestion: TopicSuggestionOut | null
+}
+
+export const previewTopic = (data: TopicPreviewRequest) =>
+  apiFetch<TopicSuggestionOut>('/entries/preview-topic', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+
+export const previewImportUrl = (topic_id: string | null, url: string) =>
+  apiFetch<URLPreviewOut>('/entries/preview-import-url', {
     method: 'POST',
     body: JSON.stringify({ topic_id, url }),
+  })
+
+export const importUrl = (topic_id: string | null, url: string, topic_suggestion?: TopicSuggestionCreate) =>
+  apiFetch<ArticleDetailOut>('/entries/import-url', {
+    method: 'POST',
+    body: JSON.stringify({ topic_id, url, topic_suggestion }),
   })
 
 export async function uploadAttachment(entryId: string, file: File): Promise<AttachmentOut> {

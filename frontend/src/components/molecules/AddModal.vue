@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
+import TopicSuggestModal from '@/components/molecules/TopicSuggestModal.vue'
 import { useTopicsStore } from '@/stores/topics'
-import { createEntry, importUrl, uploadAttachment } from '@/api/entries'
+import { createEntry, importUrl, uploadAttachment, previewTopic, previewImportUrl } from '@/api/entries'
+import type { TopicSuggestionOut } from '@/api/entries'
 
 const emit = defineEmits<{
   close: []
@@ -38,6 +40,12 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const fileTitle = ref('')
 
+// Topic suggestion modal state
+const showTopicModal = ref(false)
+const pendingSuggestion = ref<TopicSuggestionOut | null>(null)
+const pendingFeedback = ref('')
+const pendingAction = ref<{ mode: Mode; data: unknown } | null>(null)
+
 function pickFile() {
   fileInput.value?.click()
 }
@@ -51,25 +59,69 @@ function onFileChange(e: Event) {
 
 async function submit() {
   error.value = ''
+  const tId = getTopicId()
+
+  if (tId !== null) {
+    // Specific topic selected — create directly
+    await doCreate(tId)
+    return
+  }
+
+  // Auto-categorize — show preview first
   loading.value = true
   try {
-    const tId = getTopicId()
     if (mode.value === 'url') {
       if (!urlInput.value.trim()) { error.value = 'Please enter a URL.'; return }
-      await importUrl(tId, urlInput.value.trim())
+      const preview = await previewImportUrl(null, urlInput.value.trim())
+      if (preview.suggestion) {
+        pendingSuggestion.value = preview.suggestion
+        pendingAction.value = { mode: 'url', data: { url: urlInput.value.trim(), preview } }
+        showTopicModal.value = true
+      } else {
+        // No suggestion available, create directly
+        await doCreate(null)
+      }
     } else if (mode.value === 'note') {
       if (!noteTitle.value.trim()) { error.value = 'Title is required.'; return }
+      const suggestion = await previewTopic({
+        title: noteTitle.value.trim(),
+        excerpt: '',
+        body: noteBody.value,
+      })
+      pendingSuggestion.value = suggestion
+      pendingAction.value = { mode: 'note', data: { title: noteTitle.value.trim(), body: noteBody.value, tags: noteTags.value } }
+      showTopicModal.value = true
+    } else if (mode.value === 'file') {
+      // File mode: no content to preview, create directly
+      await doCreate(null)
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Something went wrong.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function doCreate(topicIdOverride: string | null) {
+  loading.value = true
+  error.value = ''
+  try {
+    if (mode.value === 'url') {
+      const url = urlInput.value.trim()
+      await importUrl(topicIdOverride, url, pendingSuggestion.value || undefined)
+    } else if (mode.value === 'note') {
       await createEntry({
-        topic_id: tId,
+        topic_id: topicIdOverride,
         type: 'Note',
         title: noteTitle.value.trim(),
         body: noteBody.value,
         tags: noteTags.value.split(',').map((t) => t.trim()).filter(Boolean),
+        topic_suggestion: pendingSuggestion.value || undefined,
       })
     } else if (mode.value === 'file') {
       if (!selectedFile.value) { error.value = 'Please choose a file.'; return }
       const entry = await createEntry({
-        topic_id: tId,
+        topic_id: topicIdOverride,
         type: 'Reference',
         title: fileTitle.value.trim() || selectedFile.value.name,
       })
@@ -82,6 +134,48 @@ async function submit() {
   } finally {
     loading.value = false
   }
+}
+
+async function onApproveSuggestion() {
+  showTopicModal.value = false
+  await doCreate(null)
+}
+
+async function onRegenerateSuggestion(feedback: string) {
+  pendingFeedback.value = feedback
+  loading.value = true
+  try {
+    let newSuggestion: TopicSuggestionOut
+    if (pendingAction.value?.mode === 'url') {
+      const data = pendingAction.value.data as { url: string; preview: { title: string; excerpt: string; body: string } }
+      newSuggestion = await previewTopic({
+        title: data.preview.title,
+        excerpt: data.preview.excerpt,
+        body: data.preview.body,
+        feedback,
+      })
+    } else if (pendingAction.value?.mode === 'note') {
+      const data = pendingAction.value.data as { title: string; body: string }
+      newSuggestion = await previewTopic({
+        title: data.title,
+        body: data.body,
+        feedback,
+      })
+    } else {
+      return
+    }
+    pendingSuggestion.value = newSuggestion
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Regeneration failed.'
+  } finally {
+    loading.value = false
+  }
+}
+
+function onCancelSuggestion() {
+  showTopicModal.value = false
+  pendingSuggestion.value = null
+  pendingAction.value = null
 }
 
 const modes: Array<{ id: 'url' | 'note' | 'file'; label: string; sub: string; icon: string }> = [
@@ -252,4 +346,14 @@ const modes: Array<{ id: 'url' | 'note' | 'file'; label: string; sub: string; ic
       </div>
     </Transition>
   </Teleport>
+
+  <!-- Topic suggestion modal -->
+  <TopicSuggestModal
+    v-if="showTopicModal && pendingSuggestion"
+    :suggestion="pendingSuggestion"
+    :loading="loading"
+    @approve="onApproveSuggestion"
+    @regenerate="onRegenerateSuggestion"
+    @cancel="onCancelSuggestion"
+  />
 </template>

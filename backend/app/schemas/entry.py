@@ -60,6 +60,12 @@ IMG_COLORS = [
 ]
 
 
+class TopicSuggestionCreate(BaseModel):
+    name: str
+    description: str = ""
+    color: str
+
+
 class EntryCreate(BaseModel):
     topic_id: str | None = None
     type: str = "Note"
@@ -72,6 +78,7 @@ class EntryCreate(BaseModel):
     img_url: str | None = None
     is_starred: bool = False
     tags: list[str] = []
+    topic_suggestion: TopicSuggestionCreate | None = None
 
     @field_validator("type")
     @classmethod
@@ -84,6 +91,30 @@ class EntryCreate(BaseModel):
 class URLImportRequest(BaseModel):
     topic_id: str | None = None
     url: str
+    topic_suggestion: TopicSuggestionCreate | None = None
+
+
+class TopicSuggestionOut(BaseModel):
+    name: str
+    description: str = ""
+    color: str
+    is_new: bool = False
+
+
+class TopicPreviewRequest(BaseModel):
+    title: str
+    excerpt: str = ""
+    body: str = ""
+    feedback: str | None = None
+
+
+class URLPreviewOut(BaseModel):
+    title: str
+    excerpt: str
+    body: str
+    has_img: bool
+    img_url: str | None = None
+    suggestion: TopicSuggestionOut | None = None
 
 
 class EntryUpdate(BaseModel):
