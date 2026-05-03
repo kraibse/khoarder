@@ -6,6 +6,7 @@ export interface ConfigOut {
   llm_timeout: number
   llm_context_entries: number
   system_prompt: string
+  auto_tag_count: number
 }
 
 export interface ConfigUpdate {
@@ -14,6 +15,7 @@ export interface ConfigUpdate {
   llm_timeout?: number
   llm_context_entries?: number
   system_prompt?: string
+  auto_tag_count?: number
 }
 
 export interface HealthOut {

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     llm_timeout: int = 60           # seconds per request
     llm_context_entries: int = 5    # retrieved entries sent as context per Q&A
     system_prompt: str = ""         # custom system prompt for extension drafting
+    auto_tag_count: int = 3         # number of tags to auto-generate for new entries
 
 
 settings = Settings()

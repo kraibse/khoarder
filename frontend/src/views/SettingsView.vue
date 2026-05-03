@@ -37,6 +37,7 @@ async function handleSave() {
       llm_timeout: config.value.llm_timeout,
       llm_context_entries: config.value.llm_context_entries,
       system_prompt: config.value.system_prompt,
+      auto_tag_count: config.value.auto_tag_count,
     })
     success.value = true
     setTimeout(() => (success.value = false), 3000)
@@ -80,7 +81,7 @@ async function handleHealthCheck() {
 
       <div v-else class="space-y-8">
         <section>
-          <h2 class="mb-4 text-sm font-medium uppercase tracking-wide text-ink-3">LLM Studio</h2>
+          <h2 class="mb-4 text-sm font-medium uppercase tracking-wide text-ink-3">LM Studio</h2>
           <div class="space-y-4">
             <div>
               <label class="mb-1 block text-sm text-ink-2">Base URL</label>
@@ -102,7 +103,7 @@ async function handleHealthCheck() {
               />
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-3 gap-4">
               <div>
                 <label class="mb-1 block text-sm text-ink-2">Timeout (seconds)</label>
                 <input
@@ -122,6 +123,17 @@ async function handleHealthCheck() {
                   max="50"
                   class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
                 />
+              </div>
+              <div>
+                <label class="mb-1 block text-sm text-ink-2">Auto-tags</label>
+                <input
+                  v-model.number="config.auto_tag_count"
+                  type="number"
+                  min="0"
+                  max="10"
+                  class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <p class="mt-1 text-xs text-ink-3">Tags per new entry (0 to disable)</p>
               </div>
             </div>
 

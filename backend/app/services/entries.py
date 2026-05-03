@@ -431,6 +431,60 @@ async def extract_url_content(url: str) -> dict:
     }
 
 
+async def _suggest_tags(db: AsyncSession, title: str, excerpt: str, body: str, count: int = 3) -> list[str]:
+    """Use LM Studio to suggest tags for an entry. Returns list of tag strings."""
+    import logging
+    from app.core.config import settings
+    from app.services import config as config_svc
+
+    logger = logging.getLogger(__name__)
+
+    if count <= 0:
+        return []
+
+    base_url = await config_svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
+    if not base_url or not base_url.strip():
+        return []
+
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            base_url=base_url.rstrip("/") + "/",
+            api_key="not-needed",
+            timeout=float(await config_svc.get_config_value(db, "llm_timeout", default=str(settings.llm_timeout))),
+        )
+        model = await config_svc.get_config_value(db, "llm_model", default=settings.llm_model)
+
+        prompt = (
+            f"Suggest exactly {count} concise tags for the following knowledge entry. "
+            f"Tags should be single words or short phrases (1-2 words each). "
+            f"Respond with ONLY the tags, one per line, no numbering, no extra text.\n\n"
+            f"Title: {title}\n"
+            f"Excerpt: {excerpt}\n"
+            f"Body: {body[:800]}..."
+        )
+
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=60,
+        )
+        raw_content = response.choices[0].message.content
+        if not raw_content:
+            return []
+
+        tags = []
+        for line in raw_content.split("\n"):
+            tag = line.strip().lstrip("-").strip()
+            if tag:
+                tags.append(tag)
+        return tags[:count]
+    except Exception as exc:
+        logger.warning("Tag suggestion failed: %s", exc)
+        return []
+
+
 async def suggest_topic(
     db: AsyncSession,
     title: str,
@@ -545,6 +599,9 @@ async def create_entry(
     tag_names: list[str] | None = None,
     topic_suggestion: dict | None = None,
 ) -> ArticleDetailOut:
+    from app.core.config import settings
+    from app.services import config as config_svc
+
     # Auto-categorize if no topic provided (treat empty string as null)
     if not topic_id:
         if topic_suggestion:
@@ -612,7 +669,18 @@ async def create_entry(
     db.add(entry)
     await db.flush()
 
-    for tag_name in (tag_names or []):
+    # Merge user-provided tags with auto-suggested tags
+    final_tags = list(tag_names or [])
+    if not final_tags:
+        try:
+            auto_count = int(await config_svc.get_config_value(db, "auto_tag_count", default=str(settings.auto_tag_count)))
+            if auto_count > 0:
+                suggested = await _suggest_tags(db, title, excerpt, body, count=auto_count)
+                final_tags = suggested
+        except Exception:
+            pass
+
+    for tag_name in final_tags:
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
         tag = tag_result.scalar_one_or_none()
         if tag is None:
@@ -631,7 +699,7 @@ async def create_entry(
         title=entry.title,
         excerpt=entry.excerpt,
         body=entry.body,
-        tags=tag_names or [],
+        tags=final_tags,
         date=_format_date(entry.created_at),
         source=_entry_source(entry),
         source_url=entry.source_url,

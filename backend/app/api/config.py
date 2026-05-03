@@ -15,6 +15,7 @@ _CONFIG_KEYS = [
     ("llm_timeout", int),
     ("llm_context_entries", int),
     ("system_prompt", str),
+    ("auto_tag_count", int),
 ]
 
 
