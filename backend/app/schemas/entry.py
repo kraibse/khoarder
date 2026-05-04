@@ -115,6 +115,7 @@ class URLPreviewOut(BaseModel):
     has_img: bool
     img_url: str | None = None
     suggestion: TopicSuggestionOut | None = None
+    partial: bool = False  # True when body content could not be fully extracted
 
 
 class EntryUpdate(BaseModel):

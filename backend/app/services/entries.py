@@ -283,151 +283,313 @@ async def _classify_entry(db: AsyncSession, title: str, excerpt: str, body: str)
         return None, None
 
 
-async def extract_url_content(url: str) -> dict:
-    """Fetch and extract content from a URL. Returns dict with title, excerpt, body, has_img, img_url."""
+def _meta_extract(html: str) -> tuple[str, str, str | None]:
+    """Extract og:title (or <title>), meta description, og:image from raw HTML.
+    Returns (title, description, img_url)."""
     import re
-    from html.parser import HTMLParser
+    import html as html_lib
+
+    title = ""
+    description = ""
+    img_url = None
+
+    m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+    if m:
+        title = html_lib.unescape(m.group(1).strip())
+
+    for pat in [
+        r'<meta\s[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*property=["\']og:title["\']',
+    ]:
+        m = re.search(pat, html, re.IGNORECASE)
+        if m:
+            title = html_lib.unescape(m.group(1).strip()) or title
+            break
+
+    for pat in [
+        r'<meta\s[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']description["\']',
+        r'<meta\s[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*property=["\']og:description["\']',
+    ]:
+        m = re.search(pat, html, re.IGNORECASE)
+        if m:
+            description = html_lib.unescape(m.group(1).strip())
+            break
+
+    for pat in [
+        r'<meta\s[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*property=["\']og:image["\']',
+        r'<meta\s[^>]*name=["\']twitter:image["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']twitter:image["\']',
+    ]:
+        m = re.search(pat, html, re.IGNORECASE)
+        if m:
+            img_url = m.group(1).strip()
+            break
+
+    return title, description, img_url
+
+
+def _extract_lxml_fallback(html: str, url: str) -> str:
+    """Last-resort extractor using lxml XPath: targets <article>, <main>, common content divs."""
+    import re
+    try:
+        from lxml.html import fromstring
+
+        doc = fromstring(html.encode("utf-8", errors="replace"))
+
+        # Strip noise elements
+        for tag in ("script", "style", "nav", "footer", "header", "aside", "noscript"):
+            for el in doc.findall(f".//{tag}"):
+                p = el.getparent()
+                if p is not None:
+                    p.remove(el)
+
+        # Find main content area in priority order
+        content = None
+        xpaths = [
+            '//article',
+            '//main',
+            '//*[@role="main"]',
+            '//*[@id="content"]',
+            '//*[contains(@class,"article-body")]',
+            '//*[contains(@class,"article-content")]',
+            '//*[contains(@class,"entry-content")]',
+            '//*[contains(@class,"post-content")]',
+            '//*[contains(@class,"content-body")]',
+            '//*[contains(@class,"page-content")]',
+            '//*[contains(@class,"story-body")]',
+            '//*[contains(@class,"body-content")]',
+        ]
+        for xpath in xpaths:
+            els = doc.xpath(xpath)
+            if els:
+                content = max(els, key=lambda e: len((e.text_content() or "")))
+                break
+
+        if content is None:
+            body_el = doc.find(".//body")
+            content = body_el if body_el is not None else doc
+
+        parts: list[str] = []
+        seen: set[str] = set()
+
+        for el in content.iter():
+            tag = el.tag if isinstance(el.tag, str) else ""
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                text = (el.text_content() or "").strip()
+                if text and text not in seen and len(text) > 2:
+                    seen.add(text)
+                    level = int(tag[1])
+                    parts.append(f"\n{'#' * level} {text}\n")
+            elif tag == "p":
+                text = (el.text_content() or "").strip()
+                if len(text) > 30 and text not in seen:
+                    seen.add(text)
+                    parts.append(text + "\n\n")
+
+        result = "".join(parts)
+        result = re.sub(r"\n{3,}", "\n\n", result).strip()
+        return result
+    except ImportError:
+        return ""
+    except Exception:
+        return ""
+
+
+async def extract_url_content(url: str) -> dict:
+    """Fetch and extract content from a URL using a layered extraction strategy.
+
+    Layers (in order):
+    1. trafilatura — ML heuristic extractor, handles most news/article sites
+    2. readability-lxml — Mozilla Readability algorithm
+    3. lxml XPath — targets <article>/<main>/role=main and known content class names
+
+    Returns dict: title, excerpt, body, has_img, img_url, partial.
+    partial=True signals the body is sparse and the user may want to paste content.
+    """
+    import re
+    import logging
     from urllib.parse import urlparse
     import httpx
 
-    title = url
+    logger = logging.getLogger(__name__)
+
+    _BROWSER_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+    }
+
+    parsed = urlparse(url)
+    title = parsed.hostname or url
     excerpt = ""
-    article_body = ""
+    body = ""
     has_img = False
     img_url = None
 
+    # ── Fetch ────────────────────────────────────────────────────────────────────
+    html = ""
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
-            resp = await client.get(url, headers={"User-Agent": "KnowledgeHoarder/1.0"})
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
+            resp = await client.get(url, headers=_BROWSER_HEADERS)
             resp.raise_for_status()
             html = resp.text
+    except Exception as exc:
+        logger.warning("URL fetch failed for %s: %s", url, exc)
+        return {"title": title, "excerpt": "", "body": "", "has_img": False, "img_url": None, "partial": True}
 
-        # Extract <title>
-        m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
-        if m:
-            title = m.group(1).strip()
+    # ── Meta (title / description / image) ───────────────────────────────────────
+    meta_title, meta_desc, meta_img = _meta_extract(html)
+    if meta_title:
+        title = meta_title
+    if meta_desc:
+        excerpt = meta_desc
+    if meta_img:
+        has_img = True
+        img_url = meta_img
 
-        # Extract <meta name="description">
-        m = re.search(
-            r'<meta\s[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE
+    is_wikipedia = "wikipedia.org" in url or "wikimedia.org" in url
+
+    # ── Wikipedia fast-path (unchanged, known-good) ──────────────────────────────
+    if is_wikipedia:
+        import re as _re
+        from html.parser import HTMLParser
+
+        content_match = _re.search(
+            r'<div[^>]*id=["\']mw-content-text["\'][^>]*>(.*?)</div>\s*'
+            r'(?:<div[^>]*class=["\']catlinks["\']|<div[^>]*id=["\']mw-data-after-content["\']|</body>)',
+            html, _re.IGNORECASE | _re.DOTALL,
         )
-        if not m:
-            m = re.search(
-                r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']description["\']',
-                html, re.IGNORECASE
-            )
-        if m:
-            excerpt = m.group(1).strip()
+        feed = content_match.group(1) if content_match else html
 
-        # Extract og:image
-        m = re.search(
-            r'<meta\s[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE
-        )
-        if not m:
-            m = re.search(
-                r'<meta\s[^>]*content=["\']([^"\']+)["\'][^>]*property=["\']og:image["\']',
-                html, re.IGNORECASE
-            )
-        if m:
-            has_img = True
-            img_url = m.group(1).strip()
-
-        # Extract body text from paragraphs
-        is_wikipedia = "wikipedia.org" in url or "wikimedia.org" in url
-
-        # Simple HTML tag stripper
-        class TagStripper(HTMLParser):
+        class _WikiStripper(HTMLParser):
             def __init__(self):
                 super().__init__()
-                self.text_parts: list[str] = []
+                self.parts: list[str] = []
                 self.skip = 0
-                self.in_paragraph = False
-                self.in_heading = False
-                self.heading_level = 0
+                self.in_p = False
+                self.in_h = False
+                self.hlevel = 0
 
             def handle_starttag(self, tag, attrs):
-                attrs_dict = dict(attrs)
+                ad = dict(attrs)
                 if tag in ("script", "style", "nav", "footer", "header", "aside"):
                     self.skip += 1
                 elif tag == "p":
-                    self.in_paragraph = True
-                    if is_wikipedia:
-                        class_attr = attrs_dict.get("class", "")
-                        if any(c in class_attr for c in ("reference", "navbox", "infobox", "mw-empty-elt")):
-                            self.in_paragraph = False
+                    cls = ad.get("class", "")
+                    self.in_p = not any(c in cls for c in ("reference", "navbox", "infobox", "mw-empty-elt"))
                 elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
-                    self.in_heading = True
-                    self.heading_level = int(tag[1])
+                    self.in_h = True
+                    self.hlevel = int(tag[1])
                 elif tag in ("br", "div"):
-                    self.text_parts.append("\n")
+                    self.parts.append("\n")
 
             def handle_endtag(self, tag):
                 if tag in ("script", "style", "nav", "footer", "header", "aside"):
                     self.skip -= 1
                 elif tag == "p":
-                    if self.in_paragraph and self.skip == 0:
-                        self.text_parts.append("\n\n")
-                    self.in_paragraph = False
+                    if self.in_p and self.skip == 0:
+                        self.parts.append("\n\n")
+                    self.in_p = False
                 elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
-                    if self.in_heading and self.skip == 0:
-                        self.text_parts.append("\n\n")
-                    self.in_heading = False
-                    self.heading_level = 0
+                    if self.in_h and self.skip == 0:
+                        self.parts.append("\n\n")
+                    self.in_h = False
 
             def handle_data(self, data):
-                if self.skip != 0:
+                if self.skip:
                     return
-                if self.in_heading:
-                    prefix = "#" * self.heading_level + " "
-                    if not self.text_parts or self.text_parts[-1].endswith("\n"):
-                        self.text_parts.append(prefix + data)
-                    else:
-                        self.text_parts.append(data)
-                elif self.in_paragraph:
-                    self.text_parts.append(data)
+                if self.in_h:
+                    prefix = "#" * self.hlevel + " "
+                    self.parts.append((prefix if not self.parts or self.parts[-1].endswith("\n") else "") + data)
+                elif self.in_p:
+                    self.parts.append(data)
 
-            def get_text(self) -> str:
-                return re.sub(r"\n\s*\n", "\n\n", "".join(self.text_parts)).strip()
+            def get_text(self):
+                return _re.sub(r"\n\s*\n", "\n\n", "".join(self.parts)).strip()
 
-        stripper = TagStripper()
-        feed = html
-        if is_wikipedia:
-            content_match = re.search(
-                r'<div[^>]*id=["\']mw-content-text["\'][^>]*>(.*?)</div>\s*(?:<div[^>]*class=["\']catlinks["\']|<div[^>]*id=["\']mw-data-after-content["\']|</body>)',
-                html, re.IGNORECASE | re.DOTALL
+        s = _WikiStripper()
+        s.feed(feed)
+        body = s.get_text()
+
+    else:
+        # ── Layer 1: trafilatura ─────────────────────────────────────────────────
+        try:
+            import trafilatura
+            extracted = trafilatura.extract(
+                html,
+                url=url,
+                include_comments=False,
+                include_tables=True,
+                favor_recall=True,
+                output_format="markdown",
             )
-            if content_match:
-                feed = content_match.group(1)
+            if extracted and len(extracted.strip()) > 150:
+                body = extracted.strip()
+                logger.debug("trafilatura succeeded for %s (%d chars)", url, len(body))
+        except ImportError:
+            logger.debug("trafilatura not installed")
+        except Exception as exc:
+            logger.debug("trafilatura failed for %s: %s", url, exc)
 
-        stripper.feed(feed)
-        article_body = stripper.get_text()
+        # ── Layer 2: readability-lxml ────────────────────────────────────────────
+        if not body or len(body) < 150:
+            try:
+                from readability import Document
+                import html as _html_lib
 
-        if len(article_body) < 100 and not is_wikipedia:
-            paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", html, re.IGNORECASE | re.DOTALL)
-            cleaned = []
-            for p in paragraphs:
-                txt = re.sub(r"<[^>]+>", "", p)
-                txt = re.sub(r"\s+", " ", txt).strip()
-                if len(txt) > 40:
-                    cleaned.append(txt)
-            article_body = "\n\n".join(cleaned)
+                doc = Document(html)
+                summary_html = doc.summary()
+                # Strip HTML tags from readability output
+                clean = re.sub(r"<[^>]+>", " ", summary_html)
+                clean = _html_lib.unescape(clean)
+                clean = re.sub(r" {2,}", " ", clean)
+                clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+                if len(clean) > len(body):
+                    body = clean
+                    logger.debug("readability succeeded for %s (%d chars)", url, len(body))
+                # readability title is often cleaner than <title>
+                rd_title = doc.title()
+                if rd_title and rd_title != title:
+                    title = rd_title
+            except ImportError:
+                logger.debug("readability-lxml not installed")
+            except Exception as exc:
+                logger.debug("readability failed for %s: %s", url, exc)
 
-    except Exception:
-        title = urlparse(url).hostname or url
+        # ── Layer 3: lxml XPath fallback ─────────────────────────────────────────
+        if not body or len(body) < 100:
+            fb = _extract_lxml_fallback(html, url)
+            if len(fb) > len(body):
+                body = fb
+                logger.debug("lxml fallback used for %s (%d chars)", url, len(body))
 
-    if not excerpt and article_body:
-        first_para = article_body.split("\n\n")[0].strip()
-        if len(first_para) > 20:
-            excerpt = first_para[:280]
+    partial = len(body.strip()) < 200
+
+    if not excerpt and body:
+        first = body.split("\n\n")[0].strip()
+        if len(first) > 20:
+            excerpt = first[:280]
 
     return {
         "title": title,
         "excerpt": excerpt,
-        "body": article_body,
+        "body": body,
         "has_img": has_img,
         "img_url": img_url,
+        "partial": partial,
     }
 
 

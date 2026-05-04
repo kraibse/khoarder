@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import TopicSuggestModal from '@/components/molecules/TopicSuggestModal.vue'
 import { useTopicsStore } from '@/stores/topics'
-import { createEntry, importUrl, uploadAttachment, previewTopic, previewImportUrl } from '@/api/entries'
-import type { TopicSuggestionOut } from '@/api/entries'
+import { createEntry, uploadAttachment, previewTopic, previewImportUrl } from '@/api/entries'
+import type { TopicSuggestionOut, URLPreviewOut } from '@/api/entries'
 
 const emit = defineEmits<{
   close: []
@@ -12,7 +12,6 @@ const emit = defineEmits<{
 }>()
 
 const topicsStore = useTopicsStore()
-const topicId = computed(() => topicsStore.activeTopicId)
 const navIds = ['home', 'inbox', 'all', 'starred']
 const selectedTopicId = ref<string | null>(
   navIds.includes(topicsStore.activeTopicId) ? null : topicsStore.activeTopicId
@@ -29,6 +28,9 @@ const error = ref('')
 
 // URL mode
 const urlInput = ref('')
+const urlExtracted = ref<URLPreviewOut | null>(null)
+const showUrlPaste = ref(false)
+const manualBody = ref('')
 
 // Note mode
 const noteTitle = ref('')
@@ -57,31 +59,51 @@ function onFileChange(e: Event) {
   fileTitle.value = f.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ')
 }
 
+function resetUrlPaste() {
+  showUrlPaste.value = false
+  urlExtracted.value = null
+  manualBody.value = ''
+  pendingSuggestion.value = null
+  pendingAction.value = null
+}
+
 async function submit() {
   error.value = ''
-  const tId = getTopicId()
 
+  if (mode.value === 'url') {
+    if (!urlInput.value.trim()) { error.value = 'Please enter a URL.'; return }
+    loading.value = true
+    try {
+      // Always preview first — checks extraction quality and fetches topic suggestion
+      const preview = await previewImportUrl(getTopicId(), urlInput.value.trim())
+      urlExtracted.value = preview
+
+      if (preview.partial) {
+        // Extraction incomplete — show paste fallback step
+        showUrlPaste.value = true
+        return
+      }
+
+      // Full extraction — proceed to topic flow or direct create
+      await _afterUrlPreview(preview)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Something went wrong.'
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+
+  // Note / file modes
+  const tId = getTopicId()
   if (tId !== null) {
-    // Specific topic selected — create directly
     await doCreate(tId)
     return
   }
 
-  // Auto-categorize — show preview first
   loading.value = true
   try {
-    if (mode.value === 'url') {
-      if (!urlInput.value.trim()) { error.value = 'Please enter a URL.'; return }
-      const preview = await previewImportUrl(null, urlInput.value.trim())
-      if (preview.suggestion) {
-        pendingSuggestion.value = preview.suggestion
-        pendingAction.value = { mode: 'url', data: { url: urlInput.value.trim(), preview } }
-        showTopicModal.value = true
-      } else {
-        // No suggestion available, create directly
-        await doCreate(null)
-      }
-    } else if (mode.value === 'note') {
+    if (mode.value === 'note') {
       if (!noteTitle.value.trim()) { error.value = 'Title is required.'; return }
       const suggestion = await previewTopic({
         title: noteTitle.value.trim(),
@@ -92,8 +114,49 @@ async function submit() {
       pendingAction.value = { mode: 'note', data: { title: noteTitle.value.trim(), body: noteBody.value, tags: noteTags.value } }
       showTopicModal.value = true
     } else if (mode.value === 'file') {
-      // File mode: no content to preview, create directly
       await doCreate(null)
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Something went wrong.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function _afterUrlPreview(preview: URLPreviewOut) {
+  if (!getTopicId() && preview.suggestion) {
+    // Auto-categorize — show topic suggestion modal
+    pendingSuggestion.value = preview.suggestion
+    pendingAction.value = {
+      mode: 'url',
+      data: { url: urlInput.value.trim(), preview },
+    }
+    showTopicModal.value = true
+  } else {
+    await doCreate(getTopicId())
+  }
+}
+
+async function proceedFromPaste() {
+  // Called when user clicks either button in the paste fallback step
+  showUrlPaste.value = false
+  loading.value = true
+  error.value = ''
+  try {
+    const preview = urlExtracted.value!
+    // Use pasted content if provided, otherwise use whatever was extracted
+    const effectiveBody = manualBody.value.trim() || preview.body
+    const enrichedPreview = { ...preview, body: effectiveBody }
+
+    if (!getTopicId() && preview.suggestion) {
+      pendingSuggestion.value = preview.suggestion
+      pendingAction.value = {
+        mode: 'url',
+        data: { url: urlInput.value.trim(), preview: enrichedPreview },
+      }
+      showTopicModal.value = true
+    } else {
+      await doCreate(getTopicId())
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Something went wrong.'
@@ -107,8 +170,19 @@ async function doCreate(topicIdOverride: string | null) {
   error.value = ''
   try {
     if (mode.value === 'url') {
-      const url = urlInput.value.trim()
-      await importUrl(topicIdOverride, url, pendingSuggestion.value || undefined)
+      const preview = urlExtracted.value!
+      const body = manualBody.value.trim() || preview.body
+      await createEntry({
+        topic_id: topicIdOverride,
+        type: body.length > 200 ? 'Article' : 'Reference',
+        title: preview.title,
+        excerpt: preview.excerpt,
+        body,
+        source_url: urlInput.value.trim(),
+        has_img: preview.has_img,
+        img_url: preview.img_url ?? undefined,
+        topic_suggestion: pendingSuggestion.value ?? undefined,
+      })
     } else if (mode.value === 'note') {
       await createEntry({
         topic_id: topicIdOverride,
@@ -223,7 +297,7 @@ const modes: Array<{ id: 'url' | 'note' | 'file'; label: string; sub: string; ic
           </template>
 
           <!-- URL form -->
-          <template v-else-if="mode === 'url'">
+          <template v-else-if="mode === 'url' && !showUrlPaste">
             <button type="button" class="text-xs text-ink-3 mb-4 hover:text-ink" @click="mode = null">
               ← Back
             </button>
@@ -249,7 +323,67 @@ const modes: Array<{ id: 'url' | 'note' | 'file'; label: string; sub: string; ic
             <div class="flex gap-2">
               <button type="button" class="flex-1 py-[9px] rounded-lg border border-line text-[13px] text-ink-3 hover:bg-surface-2" @click="emit('close')">Cancel</button>
               <button type="button" :disabled="loading" class="flex-1 py-[9px] rounded-lg bg-accent text-[13px] text-white disabled:opacity-50" @click="submit">
-                {{ loading ? 'Importing…' : 'Import' }}
+                {{ loading ? 'Fetching…' : 'Import' }}
+              </button>
+            </div>
+          </template>
+
+          <!-- URL paste fallback (shown when extraction was partial) -->
+          <template v-else-if="mode === 'url' && showUrlPaste">
+            <button type="button" class="text-xs text-ink-3 mb-4 hover:text-ink" @click="resetUrlPaste">
+              ← Back
+            </button>
+            <h2 class="font-serif text-[20px] mb-3">Content not available</h2>
+
+            <!-- Status banner -->
+            <div class="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-[8px] mb-4">
+              <AppIcon name="alert" :size="14" class="text-amber-600 mt-[1px] shrink-0" />
+              <div>
+                <p class="text-[12px] font-medium text-amber-800 leading-snug">Article content couldn't be extracted</p>
+                <p class="text-[11.5px] text-amber-700 mt-0.5 leading-snug">
+                  This happens with sites that use JavaScript rendering, bot protection (Cloudflare), or paywalls.
+                  We saved the title and description.
+                </p>
+              </div>
+            </div>
+
+            <!-- Extracted title preview -->
+            <p class="text-[11px] uppercase tracking-wide text-ink-3 mb-1">Found</p>
+            <p class="text-[13px] font-medium text-ink mb-4 truncate">{{ urlExtracted?.title }}</p>
+
+            <!-- Manual paste area -->
+            <label class="block text-[11px] uppercase tracking-wide text-ink-3 mb-1.5">
+              Paste article text <span class="normal-case text-ink-3">(optional)</span>
+            </label>
+            <textarea
+              v-model="manualBody"
+              placeholder="Open the article in your browser, select all (Ctrl+A / ⌘A), copy, and paste here."
+              rows="7"
+              class="w-full px-3 py-2 border border-line rounded-[8px] bg-surface-2
+                     text-[12.5px] text-ink placeholder:text-ink-3 outline-none focus:border-accent
+                     resize-none mb-4 leading-relaxed"
+            />
+
+            <div v-if="error" class="text-[12px] text-red-500 mb-3">{{ error }}</div>
+
+            <div class="flex gap-2">
+              <button
+                type="button"
+                :disabled="loading"
+                class="flex-1 py-[9px] rounded-lg border border-line text-[13px] text-ink-3
+                       hover:bg-surface-2 disabled:opacity-50 transition-colors"
+                @click="manualBody = ''; proceedFromPaste()"
+              >
+                Save as Reference
+              </button>
+              <button
+                type="button"
+                :disabled="loading"
+                class="flex-1 py-[9px] rounded-lg bg-accent text-[13px] text-white
+                       disabled:opacity-50 transition-colors"
+                @click="proceedFromPaste()"
+              >
+                {{ loading ? 'Saving…' : 'Import' + (manualBody.trim() ? ' with content' : '') }}
               </button>
             </div>
           </template>

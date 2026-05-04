@@ -98,6 +98,7 @@ async def preview_import_url(body: URLImportRequest, db: AsyncSession = Depends(
         has_img=extracted["has_img"],
         img_url=extracted["img_url"],
         suggestion=TopicSuggestionOut(**suggestion) if suggestion else None,
+        partial=extracted.get("partial", False),
     )
 
 

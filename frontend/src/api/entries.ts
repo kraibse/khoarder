@@ -156,6 +156,7 @@ export interface URLPreviewOut {
   has_img: boolean
   img_url: string | null
   suggestion: TopicSuggestionOut | null
+  partial: boolean  // true when full content could not be extracted automatically
 }
 
 export const previewTopic = (data: TopicPreviewRequest) =>

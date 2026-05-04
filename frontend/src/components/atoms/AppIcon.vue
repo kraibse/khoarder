@@ -47,6 +47,7 @@ const icons: Record<string, string> = {
   file: `<path d="M9 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6l-4-4zM9 2v4h4"/>`,
   'file-plus': `<path d="M9 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6l-4-4zM9 2v4h4"/><path d="M6 10h4M8 8v4"/>`,
   // ── Misc ─────────────────────────────────────────────────────────────────────
+  alert: `<path d="M8 2L1 14h14L8 2z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12.5" r="0.6" fill="currentColor" stroke="none"/>`,
   filter: `<path d="M2 4h12M4 8h8M6 12h4"/>`,
   sort: `<path d="M2 5h12M4 8h8M6 11h4"/>`,
   x: `<path d="M4 4l8 8M12 4l-8 8"/>`,
