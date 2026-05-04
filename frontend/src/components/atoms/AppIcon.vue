@@ -48,6 +48,8 @@ const icons: Record<string, string> = {
   'file-plus': `<path d="M9 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6l-4-4zM9 2v4h4"/><path d="M6 10h4M8 8v4"/>`,
   // ── Misc ─────────────────────────────────────────────────────────────────────
   alert: `<path d="M8 2L1 14h14L8 2z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12.5" r="0.6" fill="currentColor" stroke="none"/>`,
+  server: `<rect x="2" y="2" width="12" height="5" rx="1"/><rect x="2" y="9" width="12" height="5" rx="1"/><circle cx="11.5" cy="4.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="11.5" cy="11.5" r="0.8" fill="currentColor" stroke="none"/>`,
+  globe: `<circle cx="8" cy="8" r="6"/><path d="M8 2c-2 2-3 3.6-3 6s1 4 3 6M8 2c2 2 3 3.6 3 6s-1 4-3 6"/><path d="M2.5 6h11M2.5 10h11"/>`,
   filter: `<path d="M2 4h12M4 8h8M6 12h4"/>`,
   sort: `<path d="M2 5h12M4 8h8M6 11h4"/>`,
   x: `<path d="M4 4l8 8M12 4l-8 8"/>`,

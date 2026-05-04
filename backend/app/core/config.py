@@ -18,5 +18,10 @@ class Settings(BaseSettings):
     system_prompt: str = ""         # custom system prompt for extension drafting
     auto_tag_count: int = 3         # number of tags to auto-generate for new entries
 
+    # Camoufox — stealth headless browser fallback for JS-heavy / bot-protected sites
+    camoufox_enabled: bool = False  # use camoufox when standard extractors return empty content
+    camoufox_timeout: int = 30      # seconds to wait for page load
+    camoufox_headless: bool = True  # run browser without a visible window
+
 
 settings = Settings()

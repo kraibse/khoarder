@@ -398,13 +398,19 @@ def _extract_lxml_fallback(html: str, url: str) -> str:
         return ""
 
 
-async def extract_url_content(url: str) -> dict:
+async def extract_url_content(
+    url: str,
+    camoufox_enabled: bool = False,
+    camoufox_timeout: int = 30,
+    camoufox_headless: bool = True,
+) -> dict:
     """Fetch and extract content from a URL using a layered extraction strategy.
 
     Layers (in order):
     1. trafilatura — ML heuristic extractor, handles most news/article sites
     2. readability-lxml — Mozilla Readability algorithm
     3. lxml XPath — targets <article>/<main>/role=main and known content class names
+    4. camoufox (optional) — stealth headless browser for JS-rendered / bot-protected pages
 
     Returns dict: title, excerpt, body, has_img, img_url, partial.
     partial=True signals the body is sparse and the user may want to paste content.
@@ -575,6 +581,63 @@ async def extract_url_content(url: str) -> dict:
             if len(fb) > len(body):
                 body = fb
                 logger.debug("lxml fallback used for %s (%d chars)", url, len(body))
+
+    # ── Layer 4: camoufox (stealth headless browser, optional) ───────────────────
+    # Runs outside the is_wikipedia guard — only when standard layers produced < 200 chars
+    # and the user has enabled camoufox in settings.
+    if camoufox_enabled and len(body.strip()) < 200:
+        try:
+            from camoufox.async_api import AsyncCamoufox  # type: ignore[import]
+            logger.debug("launching camoufox for %s", url)
+            async with AsyncCamoufox(headless=camoufox_headless) as browser:
+                page = await browser.new_page()
+                await page.goto(url, timeout=camoufox_timeout * 1000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=camoufox_timeout * 1000)
+                except Exception:
+                    pass  # networkidle timeout is common on heavy pages — still get content
+                html_cf = await page.content()
+                await page.close()
+
+            # Re-run trafilatura on the fully JS-rendered HTML
+            try:
+                import trafilatura  # type: ignore[import]
+                cf_body = trafilatura.extract(
+                    html_cf,
+                    url=url,
+                    include_comments=False,
+                    include_tables=True,
+                    favor_recall=True,
+                    output_format="markdown",
+                )
+                if cf_body and len(cf_body.strip()) > len(body):
+                    body = cf_body.strip()
+                    logger.debug("camoufox+trafilatura succeeded for %s (%d chars)", url, len(body))
+            except Exception:
+                pass
+
+            # If trafilatura still came up short, try lxml on the rendered HTML
+            if len(body.strip()) < 200:
+                fb = _extract_lxml_fallback(html_cf, url)
+                if len(fb) > len(body):
+                    body = fb
+                    logger.debug("camoufox+lxml succeeded for %s (%d chars)", url, len(body))
+
+            # Also refresh meta from the rendered page (JS-injected og: tags)
+            if html_cf:
+                cf_title, cf_desc, cf_img = _meta_extract(html_cf)
+                if cf_title and not title:
+                    title = cf_title
+                if cf_desc and not excerpt:
+                    excerpt = cf_desc
+                if cf_img and not img_url:
+                    has_img = True
+                    img_url = cf_img
+
+        except ImportError:
+            logger.debug("camoufox not installed; Layer 4 skipped")
+        except Exception as exc:
+            logger.warning("camoufox extraction failed for %s: %s", url, exc)
 
     partial = len(body.strip()) < 200
 

@@ -7,6 +7,9 @@ export interface ConfigOut {
   llm_context_entries: number
   system_prompt: string
   auto_tag_count: number
+  camoufox_enabled: boolean
+  camoufox_timeout: number
+  camoufox_headless: boolean
 }
 
 export interface ConfigUpdate {
@@ -16,6 +19,9 @@ export interface ConfigUpdate {
   llm_context_entries?: number
   system_prompt?: string
   auto_tag_count?: number
+  camoufox_enabled?: boolean
+  camoufox_timeout?: number
+  camoufox_headless?: boolean
 }
 
 export interface HealthOut {
@@ -24,9 +30,17 @@ export interface HealthOut {
   error: string | null
 }
 
+export interface CamoufoxStatusOut {
+  installed: boolean
+  browser_ready: boolean
+  message: string
+}
+
 export const getConfig = () => apiFetch<ConfigOut>('/config')
 
 export const updateConfig = (data: ConfigUpdate) =>
   apiFetch<ConfigOut>('/config', { method: 'PUT', body: JSON.stringify(data) })
 
 export const checkHealth = () => apiFetch<HealthOut>('/config/health')
+
+export const checkCamoufoxStatus = () => apiFetch<CamoufoxStatusOut>('/config/camoufox-status')
