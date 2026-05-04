@@ -101,6 +101,9 @@ export interface EntryCreate {
   body?: string
   source_url?: string | null
   source_label?: string | null
+  has_img?: boolean
+  img_url?: string | null
+  is_starred?: boolean
   tags?: string[]
   topic_suggestion?: TopicSuggestionCreate
 }
