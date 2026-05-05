@@ -13,3 +13,4 @@ httpx>=0.28.0
 trafilatura>=1.8
 readability-lxml>=0.8.1
 lxml>=5.0
+camoufox>=0.4
