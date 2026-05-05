@@ -234,19 +234,16 @@ onUnmounted(() => {
       <!-- Main scrollable column -->
       <main ref="scrollEl" class="flex-1 overflow-y-auto min-w-0">
         <!-- Hero image -->
-        <div ref="heroEl" class="relative overflow-hidden border-b border-line" style="aspect-ratio: 16/7">
+        <div
+          v-if="article.imgUrl"
+          ref="heroEl"
+          class="relative overflow-hidden border-b border-line"
+          style="aspect-ratio: 16/7"
+        >
           <img
-            v-if="article.imgUrl"
             :src="article.imgUrl"
             :alt="article.title"
             class="absolute inset-0 w-full h-full object-cover"
-          />
-          <ColorPlaceholder
-            v-else
-            :color="article.imgColor"
-            height="100%"
-            label="article hero image"
-            class="absolute inset-0"
           />
           <div
             class="absolute inset-0"
