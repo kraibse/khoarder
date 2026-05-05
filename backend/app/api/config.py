@@ -21,7 +21,7 @@ _CONFIG_KEYS: list[tuple[str, type]] = [
     ("auto_tag_count", int),
     ("camoufox_enabled", bool),
     ("camoufox_timeout", int),
-    ("camoufox_headless", bool),
+    ("camoufox_url", str),
 ]
 
 
@@ -91,29 +91,29 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/camoufox-status", response_model=CamoufoxStatusOut)
-async def camoufox_status():
-    """Check whether the camoufox package and its browser binary are available."""
-    try:
-        import camoufox  # noqa: F401
-    except ImportError:
+async def camoufox_status(db: AsyncSession = Depends(get_db)):
+    """Ping the camoufox-browser sidecar service and report its status."""
+    url = await svc.get_config_value(db, "camoufox_url", default=settings.camoufox_url)
+    if not url.strip():
         return CamoufoxStatusOut(
             installed=False,
             browser_ready=False,
-            message="Package not installed. Run: pip install camoufox",
+            message="No service URL configured.",
         )
-
-    # Probe the browser binary path via camoufox's internal helper (API varies by version).
     try:
-        from camoufox.pkgman import get_path  # type: ignore[import]
-        path = str(get_path() or "")
-        ready = bool(path) and os.path.exists(path)
-    except Exception:
-        ready = False
-
-    if ready:
-        return CamoufoxStatusOut(installed=True, browser_ready=True)
-    return CamoufoxStatusOut(
-        installed=True,
-        browser_ready=False,
-        message="Browser binary not downloaded. Run: python -m camoufox fetch",
-    )
+        import httpx
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(url.rstrip("/") + "/health")
+        if resp.status_code == 200:
+            return CamoufoxStatusOut(installed=True, browser_ready=True)
+        return CamoufoxStatusOut(
+            installed=True,
+            browser_ready=False,
+            message=f"Service returned HTTP {resp.status_code}.",
+        )
+    except Exception as exc:
+        return CamoufoxStatusOut(
+            installed=False,
+            browser_ready=False,
+            message=f"Unreachable: {exc}",
+        )

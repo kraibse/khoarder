@@ -10,7 +10,7 @@ class ConfigOut(BaseModel):
     auto_tag_count: int
     camoufox_enabled: bool
     camoufox_timeout: int
-    camoufox_headless: bool
+    camoufox_url: str
 
 
 class ConfigUpdate(BaseModel):
@@ -22,7 +22,7 @@ class ConfigUpdate(BaseModel):
     auto_tag_count: int | None = None
     camoufox_enabled: bool | None = None
     camoufox_timeout: int | None = None
-    camoufox_headless: bool | None = None
+    camoufox_url: str | None = None
 
 
 class HealthOut(BaseModel):
