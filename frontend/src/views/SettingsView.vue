@@ -100,7 +100,7 @@ async function handleCfCheck() {
 
 <template>
   <div class="min-h-screen bg-surface">
-    <div class="mx-auto max-w-4xl px-6 py-8">
+    <div class="mx-auto max-w-4xl px-6 py-12">
 
       <!-- Back + title -->
       <button
@@ -122,7 +122,7 @@ async function handleCfCheck() {
       <div v-else class="flex gap-0">
 
         <!-- ── Sidebar ───────────────────────────────────────────────────── -->
-        <aside class="w-44 shrink-0 border-r border-line pr-5 pt-0.5">
+        <aside class="w-56 shrink-0 border-r border-line pr-6 pt-0.5">
           <p class="mb-3 px-2 text-[10px] uppercase tracking-widest text-ink-3">Sections</p>
           <nav class="space-y-0.5">
             <button
