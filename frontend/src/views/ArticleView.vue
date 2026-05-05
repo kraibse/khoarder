@@ -152,13 +152,18 @@ async function refreshRelated() {
   related.value = rel.map(mapRelated)
 }
 
-onMounted(async () => {
+async function loadArticle() {
+  loading.value = true
   if (topicsStore.topics.length === 0) {
     await topicsStore.loadTopics()
   }
   await refreshArticle()
   loading.value = false
-})
+}
+
+onMounted(loadArticle)
+
+watch(() => props.id, loadArticle)
 
 function onWriteExtension() {
   extendPrefill.value = ''
