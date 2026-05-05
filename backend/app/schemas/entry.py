@@ -18,7 +18,9 @@ class EntryOut(BaseModel):
     img_color: str
     is_starred: bool = False
     backlink_count: int = 0
-    headline: str | None = None  # populated only in search results
+    headline: str | None = None  # first match fragment — populated only in search results
+    headlines: list[str] = []    # up to 12 match fragments (body+excerpt+title)
+    match_count: int = 0         # approx total occurrences across the entry doc
 
     model_config = {"from_attributes": True}
 

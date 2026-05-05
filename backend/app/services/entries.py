@@ -27,7 +27,13 @@ async def _backlink_count(db: AsyncSession, entry_id: str) -> int:
     return result.scalar_one()
 
 
-async def _to_entry_out(db: AsyncSession, entry: Entry, headline: str | None = None) -> EntryOut:
+async def _to_entry_out(
+    db: AsyncSession,
+    entry: Entry,
+    headline: str | None = None,
+    headlines: list[str] | None = None,
+    match_count: int = 0,
+) -> EntryOut:
     return EntryOut(
         id=entry.id,
         topic_id=entry.topic_id,
@@ -44,6 +50,8 @@ async def _to_entry_out(db: AsyncSession, entry: Entry, headline: str | None = N
         is_starred=entry.is_starred,
         backlink_count=await _backlink_count(db, entry.id),
         headline=headline,
+        headlines=headlines or [],
+        match_count=match_count,
     )
 
 
@@ -61,10 +69,16 @@ async def list_entries(
 
         hits = await search_svc.search(db, q, topic_id=topic_id, entry_type=entry_type)
         out = []
-        for entry, headline in hits:
+        for hit in hits:
+            entry = hit.entry
             if tag and not any(t.name == tag for t in entry.tags):
                 continue
-            out.append(await _to_entry_out(db, entry, headline=headline))
+            out.append(await _to_entry_out(
+                db, entry,
+                headline=hit.headline,
+                headlines=hit.headlines,
+                match_count=hit.match_count,
+            ))
         if sort == "backlinks_desc":
             out.sort(key=lambda e: e.backlink_count, reverse=True)
         return out

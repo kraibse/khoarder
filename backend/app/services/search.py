@@ -5,19 +5,34 @@ To upgrade to OpenSearch:
 1. pip install opensearch-py; set OPENSEARCH_URL env var.
 2. Implement OpenSearchBackend(SearchBackend):
    - index entries on create/update/delete
-   - query via OpenSearch search API → return (entry_id, highlight) pairs
+   - query via OpenSearch search API → return SearchHit list
    - load Entry objects from Postgres by ID (same two-phase pattern below)
 3. Replace `_backend = PostgresSearchBackend()` with `_backend = OpenSearchBackend()`.
 Route handlers and list_entries() need no changes.
 """
 
+import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, literal, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entry import Entry
+
+
+HEADLINE_DELIM = ""  # ASCII unit separator — won't appear in user content
+MAX_FRAGMENTS = 12
+MATCH_COUNT_CAP = 250
+
+
+@dataclass
+class SearchHit:
+    entry: Entry
+    headline: str | None = None         # first fragment (back-compat)
+    headlines: list[str] = field(default_factory=list)  # up to MAX_FRAGMENTS
+    match_count: int = 0                # approx total occurrences in body+excerpt+title
 
 
 class SearchBackend(ABC):
@@ -29,8 +44,17 @@ class SearchBackend(ABC):
         topic_id: str | None = None,
         entry_type: str | None = None,
         limit: int = 50,
-    ) -> list[tuple[Entry, str | None]]:
+    ) -> list[SearchHit]:
         ...
+
+
+def _build_terms_pattern(query: str) -> str | None:
+    """Build a PG regex alternation of positive query terms, escaped, w/ word boundaries."""
+    terms = [t for t in query.split() if t and not t.startswith("-")]
+    cleaned = [re.escape(t) for t in terms if t]
+    if not cleaned:
+        return None
+    return r"\m(?:" + "|".join(cleaned) + r")\M"
 
 
 class PostgresSearchBackend(SearchBackend):
@@ -41,8 +65,10 @@ class PostgresSearchBackend(SearchBackend):
     source_label. Uses websearch_to_tsquery so users can write
     'machine learning' (phrase), -python (exclude), or bare words (AND).
 
-    Returns results ranked by ts_rank_cd with a one-sentence headline from
-    the excerpt showing matched terms wrapped in <mark> tags.
+    Returns SearchHit rows ranked by ts_rank_cd. Each hit carries up to
+    MAX_FRAGMENTS headline fragments (delimiter-joined string from PG,
+    split client-side here) plus a count of total matches across the
+    body+excerpt+title document, capped for safety.
     """
 
     async def search(
@@ -52,7 +78,7 @@ class PostgresSearchBackend(SearchBackend):
         topic_id: str | None = None,
         entry_type: str | None = None,
         limit: int = 50,
-    ) -> list[tuple[Entry, str | None]]:
+    ) -> list[SearchHit]:
         doc = func.concat_ws(
             " ",
             Entry.title,
@@ -61,19 +87,42 @@ class PostgresSearchBackend(SearchBackend):
             Entry.body,
             Entry.source_label,
         )
+        # Snippet doc — body first so headlines come from full content, not just excerpt.
+        snippet_doc = func.concat_ws(
+            "\n\n",
+            func.coalesce(Entry.body, ""),
+            func.coalesce(Entry.excerpt, ""),
+            func.coalesce(Entry.title, ""),
+        )
         tsvec = func.to_tsvector("english", func.coalesce(doc, ""))
         tsq = func.websearch_to_tsquery("english", query)
         rank = func.ts_rank_cd(tsvec, tsq).label("rank")
-        headline = func.ts_headline(
+        headlines = func.ts_headline(
             "english",
-            func.coalesce(Entry.excerpt, Entry.title),
+            snippet_doc,
             tsq,
-            "MaxWords=25,MinWords=10,MaxFragments=1,StartSel=<mark>,StopSel=</mark>",
-        ).label("headline")
+            (
+                f"MaxWords=20,MinWords=6,MaxFragments={MAX_FRAGMENTS},"
+                f"FragmentDelimiter={HEADLINE_DELIM},"
+                "StartSel=<mark>,StopSel=</mark>"
+            ),
+        ).label("headlines")
 
-        # Phase 1 — ranked IDs + headlines (lightweight, no joins)
+        terms_pattern = _build_terms_pattern(query)
+        if terms_pattern:
+            match_count_expr = func.least(
+                func.coalesce(
+                    func.regexp_count(snippet_doc, terms_pattern, 1, "i"), 0
+                ),
+                MATCH_COUNT_CAP,
+            )
+        else:
+            match_count_expr = literal(0, type_=Integer)
+        match_count = match_count_expr.label("match_count")
+
+        # Phase 1 — ranked IDs + headlines + counts (lightweight, no joins)
         id_stmt = (
-            select(Entry.id, rank, headline)
+            select(Entry.id, rank, headlines, match_count)
             .where(tsvec.op("@@")(tsq))
             .order_by(rank.desc())
             .limit(limit)
@@ -84,12 +133,12 @@ class PostgresSearchBackend(SearchBackend):
             id_stmt = id_stmt.where(Entry.type.ilike(f"{entry_type.rstrip('s')}%"))
 
         id_rows = await db.execute(id_stmt)
-        hits = [(row.id, row.headline) for row in id_rows]
-        if not hits:
+        meta = [(row.id, row.headlines, int(row.match_count or 0)) for row in id_rows]
+        if not meta:
             return []
 
-        entry_ids = [h[0] for h in hits]
-        headline_map: dict[str, str | None] = {h[0]: h[1] for h in hits}
+        entry_ids = [m[0] for m in meta]
+        meta_map: dict[str, tuple[str | None, int]] = {m[0]: (m[1], m[2]) for m in meta}
 
         # Phase 2 — load full Entry objects with tags, preserve rank order
         entry_result = await db.execute(
@@ -99,11 +148,26 @@ class PostgresSearchBackend(SearchBackend):
         )
         entries_by_id = {e.id: e for e in entry_result.scalars().all()}
 
-        return [
-            (entries_by_id[eid], headline_map[eid])
-            for eid in entry_ids
-            if eid in entries_by_id
-        ]
+        out: list[SearchHit] = []
+        for eid in entry_ids:
+            if eid not in entries_by_id:
+                continue
+            raw_headline, count = meta_map[eid]
+            fragments = _split_headlines(raw_headline)
+            out.append(SearchHit(
+                entry=entries_by_id[eid],
+                headline=fragments[0] if fragments else None,
+                headlines=fragments,
+                match_count=max(count, len(fragments)),
+            ))
+        return out
+
+
+def _split_headlines(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.split(HEADLINE_DELIM)]
+    return [p for p in parts if p]
 
 
 _backend: SearchBackend = PostgresSearchBackend()
@@ -115,5 +179,5 @@ async def search(
     topic_id: str | None = None,
     entry_type: str | None = None,
     limit: int = 50,
-) -> list[tuple[Entry, str | None]]:
-    return await _backend.search(db, query, topic_id, entry_type, limit)
+) -> list[SearchHit]:
+    return await _backend.search(db, query, topic_id=topic_id, entry_type=entry_type, limit=limit)
