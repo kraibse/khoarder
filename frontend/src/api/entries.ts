@@ -15,7 +15,9 @@ export interface EntryOut {
   img_color: string
   is_starred: boolean
   backlink_count: number
-  headline?: string | null  // FTS snippet with <mark> highlights, present only in search results
+  headline?: string | null     // first FTS snippet (back-compat)
+  headlines?: string[]         // up to 12 match fragments, present only in search results
+  match_count?: number         // total approximate occurrences
 }
 
 export interface ArticleDetailOut extends EntryOut {

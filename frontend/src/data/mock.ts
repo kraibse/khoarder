@@ -24,7 +24,9 @@ export interface Entry {
   date: string
   source?: string
   backlinkCount?: number
-  headline?: string  // FTS snippet with <mark> highlights, present only in search results
+  headline?: string       // first FTS snippet (back-compat)
+  headlines?: string[]    // up to 12 match fragments, present only in search results
+  matchCount?: number     // total approximate occurrences
 }
 
 export interface ArticleDetail extends Entry {

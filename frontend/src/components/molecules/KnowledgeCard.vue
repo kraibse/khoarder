@@ -4,10 +4,12 @@ import { useRouter } from 'vue-router'
 import type { Entry } from '@/data/mock'
 import ColorPlaceholder from './ColorPlaceholder.vue'
 import OverflowMenu from './OverflowMenu.vue'
+import SearchHits from './SearchHits.vue'
 import AppTag from '@/components/atoms/AppTag.vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import { updateEntry, deleteEntry } from '@/api/entries'
 import { useEntriesStore } from '@/stores/entries'
+import { useUIStore } from '@/stores/ui'
 
 const props = defineProps<{
   entry: Entry
@@ -15,13 +17,38 @@ const props = defineProps<{
   cardRadius?: number
 }>()
 
+const uiStore = useUIStore()
+
 const router = useRouter()
 const entriesStore = useEntriesStore()
 const menuPos = ref<{ x: number; y: number } | null>(null)
 const isStarred = ref(props.entry.isStarred)
 
 function openCard() {
-  router.push({ name: 'article', params: { id: props.entry.id } })
+  const q = uiStore.searchQuery.trim()
+  router.push({
+    name: 'article',
+    params: { id: props.entry.id },
+    ...(q ? { query: { q } } : {}),
+  })
+}
+
+function jumpToHit(_id: string, hitIdx: number) {
+  const q = uiStore.searchQuery.trim()
+  router.push({
+    name: 'article',
+    params: { id: props.entry.id },
+    query: { q, hit: String(hitIdx) },
+  })
+}
+
+function openAllHits(_id: string) {
+  const q = uiStore.searchQuery.trim()
+  router.push({
+    name: 'article',
+    params: { id: props.entry.id },
+    query: { q, all: '1' },
+  })
 }
 
 function openMenu(e: MouseEvent) {
@@ -98,9 +125,9 @@ async function handleAction(label: string) {
           {{ entry.title }}
         </h2>
 
-        <!-- Excerpt / search headline -->
+        <!-- Excerpt — hidden when we have rich multi-hit excerpts below -->
         <div
-          v-if="showExcerpt !== false"
+          v-if="showExcerpt !== false && !(entry.headlines && entry.headlines.length > 0)"
           class="text-xs text-ink-2 leading-[1.55] line-clamp-3"
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
@@ -117,6 +144,17 @@ async function handleAction(label: string) {
           />
         </div>
       </div>
+
+      <!-- Search hit excerpts — only when search is active -->
+      <SearchHits
+        v-if="entry.headlines && entry.headlines.length > 0"
+        :card-id="entry.id"
+        :headlines="entry.headlines"
+        :match-count="entry.matchCount ?? entry.headlines.length"
+        :query="uiStore.searchQuery"
+        @jump="jumpToHit"
+        @open-all="openAllHits"
+      />
 
       <!-- Card footer -->
       <div

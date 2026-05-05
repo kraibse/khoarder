@@ -22,6 +22,8 @@ function mapEntry(e: EntryOut): Entry {
     source: e.source ?? undefined,
     backlinkCount: e.backlink_count,
     headline: e.headline ?? undefined,
+    headlines: e.headlines ?? undefined,
+    matchCount: e.match_count ?? undefined,
   }
 }
 

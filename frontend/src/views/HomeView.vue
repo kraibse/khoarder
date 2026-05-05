@@ -23,6 +23,22 @@ const topicStats = computed(() => {
   return [`${topic.count} entries`]
 })
 
+const isSearchingActive = computed(() => uiStore.searchQuery.trim().length > 0)
+
+const totalHits = computed(() => {
+  if (!isSearchingActive.value) return 0
+  return entriesStore.filteredEntries.reduce((sum, e) => {
+    const fromCount = e.matchCount ?? 0
+    const fromList = e.headlines?.length ?? 0
+    return sum + Math.max(fromCount, fromList)
+  }, 0)
+})
+
+function clearSearch() {
+  uiStore.searchQuery = ''
+  uiStore.searchAllTopics = false
+}
+
 function activeTopicId(): string | null {
   if (uiStore.activeSmartView) return null
   const tid = topicsStore.activeTopicId
@@ -96,9 +112,9 @@ watch(
       <AppTopBar @open-add="showAdd = true" />
 
       <main class="flex-1 overflow-y-auto p-6">
-        <!-- Topic description strip — hidden during cross-topic search -->
+        <!-- Topic description strip — hidden during cross-topic search OR active search -->
         <div
-          v-if="topicsStore.activeTopic && !uiStore.searchAllTopics"
+          v-if="topicsStore.activeTopic && !uiStore.searchAllTopics && !isSearchingActive"
           class="flex items-center gap-3 mb-4 px-4 py-3 bg-surface-2 rounded-lg border border-line"
         >
           <span
@@ -119,18 +135,36 @@ watch(
           </div>
         </div>
 
-        <!-- Cross-topic search banner -->
+        <!-- Search summary banner (in-topic or all-topics) -->
         <div
-          v-if="uiStore.searchAllTopics && entriesStore.isSearching"
-          class="flex items-center gap-2 mb-4 px-4 py-2 bg-accent-bg rounded-lg border border-accent/30 text-[12.5px] text-accent"
+          v-if="isSearchingActive"
+          class="flex items-center gap-2 mb-4 px-3.5 py-2.5 bg-accent-bg rounded-lg border border-accent/30 text-[12.5px] text-accent"
         >
-          <span>Searching all topics</span>
-          <span class="text-accent/60">·</span>
-          <span>{{ entriesStore.filteredEntries.length }} result{{ entriesStore.filteredEntries.length !== 1 ? 's' : '' }}</span>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" class="w-3.5 h-3.5 flex-shrink-0">
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.5 10.5L14 14" />
+          </svg>
+          <span>
+            <strong class="font-semibold">{{ totalHits }}</strong>
+            match{{ totalHits === 1 ? '' : 'es' }} across
+            <strong class="font-semibold">{{ entriesStore.filteredEntries.length }}</strong>
+            entr{{ entriesStore.filteredEntries.length === 1 ? 'y' : 'ies' }} for
+            <strong class="font-semibold">"{{ uiStore.searchQuery.trim() }}"</strong>
+            <span v-if="uiStore.searchAllTopics" class="text-accent/60"> · all topics</span>
+          </span>
+          <button
+            type="button"
+            class="ml-auto px-2 py-1 rounded-[5px] text-[11px] border border-accent/30
+                   hover:bg-surface transition-colors duration-[120ms]"
+            @click="clearSearch"
+          >
+            Clear
+          </button>
         </div>
 
-        <!-- Filter bar — hidden during cross-topic search (filters don't apply) -->
-        <div v-if="!uiStore.searchAllTopics" class="flex items-center gap-2 flex-wrap mb-5">
+        <!-- Filter bar — hidden during cross-topic search OR active search -->
+        <div v-if="!uiStore.searchAllTopics && !isSearchingActive" class="flex items-center gap-2 flex-wrap mb-5">
           <FilterChip
             v-for="filter in filters"
             :key="filter"
