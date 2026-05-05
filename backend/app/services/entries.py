@@ -447,6 +447,7 @@ async def extract_url_content(
 
     # ── Fetch ────────────────────────────────────────────────────────────────────
     html = ""
+    fetch_failed = False
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
             resp = await client.get(url, headers=_BROWSER_HEADERS)
@@ -454,6 +455,27 @@ async def extract_url_content(
             html = resp.text
     except Exception as exc:
         logger.warning("URL fetch failed for %s: %s", url, exc)
+        fetch_failed = True
+
+    # ── Camoufox fallback when static fetch fails ────────────────────────────────
+    if fetch_failed and camoufox_enabled and camoufox_url:
+        try:
+            logger.debug("static fetch failed, trying camoufox-browser sidecar for %s", url)
+            async with httpx.AsyncClient(timeout=camoufox_timeout + 10) as cf_client:
+                cf_resp = await cf_client.post(
+                    camoufox_url.rstrip("/") + "/fetch",
+                    json={"url": url, "timeout": camoufox_timeout},
+                )
+            cf_data = cf_resp.json()
+            if cf_data.get("status") == "ok":
+                html = cf_data.get("html", "")
+                logger.debug("camoufox fetch succeeded for %s (%d bytes)", url, len(html))
+            else:
+                logger.warning("camoufox-browser error for %s: %s", url, cf_data.get("message"))
+        except Exception as exc:
+            logger.warning("camoufox-browser call failed for %s: %s", url, exc)
+
+    if not html:
         return {"title": title, "excerpt": "", "body": "", "has_img": False, "img_url": None, "partial": True}
 
     # ── Meta (title / description / image) ───────────────────────────────────────
@@ -585,7 +607,7 @@ async def extract_url_content(
     # ── Layer 4: camoufox-browser sidecar (HTTP, optional) ───────────────────────
     # POST to the camoufox-browser container; only runs when standard layers produced
     # < 200 chars and the user has enabled camoufox in settings.
-    if camoufox_enabled and camoufox_url and len(body.strip()) < 200:
+    if not fetch_failed and camoufox_enabled and camoufox_url and len(body.strip()) < 200:
         try:
             logger.debug("calling camoufox-browser sidecar for %s", url)
             async with httpx.AsyncClient(timeout=camoufox_timeout + 10) as cf_client:
