@@ -10,6 +10,9 @@ export interface ConfigOut {
   camoufox_enabled: boolean
   camoufox_timeout: number
   camoufox_url: string
+  suggest_searxng_url: string
+  suggest_use_llm_expand: boolean
+  suggest_use_llm_rerank: boolean
 }
 
 export interface ConfigUpdate {
@@ -22,6 +25,9 @@ export interface ConfigUpdate {
   camoufox_enabled?: boolean
   camoufox_timeout?: number
   camoufox_url?: string
+  suggest_searxng_url?: string
+  suggest_use_llm_expand?: boolean
+  suggest_use_llm_rerank?: boolean
 }
 
 export interface HealthOut {

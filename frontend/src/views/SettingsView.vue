@@ -28,13 +28,14 @@ const cfStatus = ref<CamoufoxStatusOut | null>(null)
 const checkingCf = ref(false)
 
 // Sidebar navigation
-type Section = 'lm-studio' | 'extension-drafting' | 'camoufox'
+type Section = 'lm-studio' | 'extension-drafting' | 'camoufox' | 'find-more'
 const activeSection = ref<Section>('lm-studio')
 
 const sections: Array<{ id: Section; label: string; icon: string }> = [
   { id: 'lm-studio', label: 'LM Studio', icon: 'server' },
   { id: 'extension-drafting', label: 'Extension Drafting', icon: 'edit' },
   { id: 'camoufox', label: 'Camoufox', icon: 'globe' },
+  { id: 'find-more', label: 'Find more', icon: 'sparkle' },
 ]
 
 onMounted(async () => {
@@ -64,6 +65,9 @@ async function handleSave() {
       camoufox_enabled: config.value.camoufox_enabled,
       camoufox_timeout: config.value.camoufox_timeout,
       camoufox_url: config.value.camoufox_url,
+      suggest_searxng_url: config.value.suggest_searxng_url,
+      suggest_use_llm_expand: config.value.suggest_use_llm_expand,
+      suggest_use_llm_rerank: config.value.suggest_use_llm_rerank,
     })
     success.value = true
     setTimeout(() => (success.value = false), 3000)
@@ -359,6 +363,80 @@ async function handleCfCheck() {
                   </li>
                 </ol>
                 <p v-if="cfStatus.message" class="mt-2 text-[11px] text-ink-3 font-mono">{{ cfStatus.message }}</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Find more ──────────────────────────────────────────────────── -->
+          <section v-else-if="activeSection === 'find-more'" class="space-y-5">
+            <div>
+              <h2 class="mb-0.5 text-[15px] font-semibold text-ink">Find more</h2>
+              <p class="text-[12.5px] text-ink-3">
+                Tune the discovery providers used by the topic-level <em>Find more</em>
+                sidebar. Wikipedia, arXiv, Semantic Scholar, OpenAlex and Hacker News are
+                always on. Optional sources and LM Studio enrichment are configured here.
+              </p>
+            </div>
+
+            <div class="space-y-4">
+              <div>
+                <label class="mb-1 block text-sm text-ink-2">SearXNG instance URL</label>
+                <input
+                  v-model="config.suggest_searxng_url"
+                  type="text"
+                  placeholder="https://searx.example.org"
+                  class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <p class="mt-1 text-xs text-ink-3">
+                  Adds a metasearch provider for varied web sources. Leave empty to disable.
+                  The instance must expose <code class="font-mono">/search?format=json</code>.
+                </p>
+              </div>
+
+              <div class="flex items-start gap-3 rounded-lg border border-line bg-surface-2 px-4 py-3.5">
+                <div class="flex-1">
+                  <p class="text-[13px] font-medium text-ink">LM Studio query expansion</p>
+                  <p class="mt-0.5 text-[12px] text-ink-3">
+                    Let the local LLM invent 2–3 alternate search phrases from the topic
+                    context to surface heterodox sources. Requires LM Studio configured.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="config.suggest_use_llm_expand"
+                  class="relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1"
+                  :class="config.suggest_use_llm_expand ? 'bg-accent' : 'bg-[var(--border)]'"
+                  @click="config.suggest_use_llm_expand = !config.suggest_use_llm_expand"
+                >
+                  <span
+                    class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-150"
+                    :class="config.suggest_use_llm_expand ? 'translate-x-[18px]' : 'translate-x-0.5'"
+                  />
+                </button>
+              </div>
+
+              <div class="flex items-start gap-3 rounded-lg border border-line bg-surface-2 px-4 py-3.5">
+                <div class="flex-1">
+                  <p class="text-[13px] font-medium text-ink">LM Studio relevance reranker</p>
+                  <p class="mt-0.5 text-[12px] text-ink-3">
+                    After fast keyword ranking, ask the LLM to rescore the top candidates
+                    against the topic. Slower but produces more coherent picks.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="config.suggest_use_llm_rerank"
+                  class="relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1"
+                  :class="config.suggest_use_llm_rerank ? 'bg-accent' : 'bg-[var(--border)]'"
+                  @click="config.suggest_use_llm_rerank = !config.suggest_use_llm_rerank"
+                >
+                  <span
+                    class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-150"
+                    :class="config.suggest_use_llm_rerank ? 'translate-x-[18px]' : 'translate-x-0.5'"
+                  />
+                </button>
               </div>
             </div>
           </section>
