@@ -15,7 +15,7 @@ import { useReadProgress } from '@/composables/useReadProgress'
 import { useTableOfContents } from '@/composables/useTableOfContents'
 import { useTopicsStore } from '@/stores/topics'
 import { useEntriesStore } from '@/stores/entries'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { ArticleDetail, Backlink, RelatedEntry, SourceFile } from '@/data/mock'
 import { getEntry, getBacklinks, getRelated, getAttachments } from '@/api/entries'
 import type { ArticleDetailOut, BacklinkOut, RelatedEntryOut, AttachmentOut } from '@/api/entries'
@@ -24,6 +24,21 @@ marked.use({ breaks: true })
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
+const route = useRoute()
+
+const searchQuery = computed(() => {
+  const q = route.query.q
+  return typeof q === 'string' ? q.trim() : ''
+})
+
+const targetHit = computed(() => {
+  const h = route.query.hit
+  if (typeof h !== 'string') return null
+  const n = parseInt(h, 10)
+  return Number.isFinite(n) && n >= 0 ? n : null
+})
+
+const highlightAll = computed(() => route.query.all === '1')
 
 const topicsStore = useTopicsStore()
 const entriesStore = useEntriesStore()
@@ -76,8 +91,105 @@ const renderedBody = computed(() => {
 watch(renderedBody, () => {
   nextTick(() => {
     if (scrollEl.value) observe(scrollEl.value)
+    applySearchHighlights()
   })
 })
+
+watch(
+  () => [searchQuery.value, targetHit.value, highlightAll.value],
+  () => nextTick(applySearchHighlights),
+)
+
+const HIT_MARK_CLASS = 'search-jump-hit'
+const TARGET_MARK_CLASS = 'search-jump-target'
+
+function clearHighlights(root: HTMLElement | null) {
+  if (!root) return
+  const marks = root.querySelectorAll(`mark.${HIT_MARK_CLASS}`)
+  marks.forEach((m) => {
+    const parent = m.parentNode
+    if (!parent) return
+    while (m.firstChild) parent.insertBefore(m.firstChild, m)
+    parent.removeChild(m)
+    parent.normalize?.()
+  })
+}
+
+function applySearchHighlights() {
+  const root = scrollEl.value?.querySelector('.article-prose') as HTMLElement | null
+  if (!root) return
+  clearHighlights(root)
+
+  const q = searchQuery.value
+  if (!q || q.length < 2) return
+
+  const re = new RegExp(escapeRegExp(q), 'gi')
+  const targetIdx = targetHit.value
+  let counter = 0
+  let targetEl: HTMLElement | null = null
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = (node as Text).parentElement
+      if (!parent) return NodeFilter.FILTER_REJECT
+      // Skip text inside script/style and existing marks
+      const tag = parent.tagName.toLowerCase()
+      if (tag === 'script' || tag === 'style' || tag === 'mark') {
+        return NodeFilter.FILTER_REJECT
+      }
+      return (node.nodeValue && re.test(node.nodeValue))
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT
+    },
+  })
+
+  const textNodes: Text[] = []
+  let n: Node | null = walker.nextNode()
+  while (n) {
+    textNodes.push(n as Text)
+    n = walker.nextNode()
+  }
+
+  for (const node of textNodes) {
+    const text = node.nodeValue ?? ''
+    re.lastIndex = 0
+    const frag = document.createDocumentFragment()
+    let cursor = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > cursor) {
+        frag.appendChild(document.createTextNode(text.slice(cursor, m.index)))
+      }
+      const mark = document.createElement('mark')
+      mark.className = HIT_MARK_CLASS
+      if (counter === targetIdx) {
+        mark.classList.add(TARGET_MARK_CLASS)
+        targetEl = mark
+      }
+      mark.dataset.hitIndex = String(counter)
+      mark.textContent = m[0]
+      frag.appendChild(mark)
+      cursor = m.index + m[0].length
+      counter += 1
+      if (m.index === re.lastIndex) re.lastIndex += 1
+    }
+    if (cursor < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(cursor)))
+    }
+    node.parentNode?.replaceChild(frag, node)
+  }
+
+  if (targetEl) {
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  } else if (highlightAll.value) {
+    const first = root.querySelector(`mark.${HIT_MARK_CLASS}`) as HTMLElement | null
+    first?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 function formatBytes(b: number): string {
   if (b < 1024) return `${b} B`
@@ -383,3 +495,26 @@ onUnmounted(() => {
     />
   </div>
 </template>
+
+<style>
+.article-prose mark.search-jump-hit {
+  background: oklch(85% 0.12 95);
+  color: var(--text);
+  padding: 0 1px;
+  border-radius: 2px;
+  font-weight: 500;
+}
+
+.article-prose mark.search-jump-target {
+  background: oklch(80% 0.18 75);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  animation: search-jump-pulse 1.4s ease-out 0.2s 1;
+}
+
+@keyframes search-jump-pulse {
+  0%   { box-shadow: 0 0 0 0 oklch(40% 0.075 200 / 0.55); }
+  70%  { box-shadow: 0 0 0 8px oklch(40% 0.075 200 / 0); }
+  100% { box-shadow: 0 0 0 0 oklch(40% 0.075 200 / 0); }
+}
+</style>
