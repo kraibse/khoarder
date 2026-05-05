@@ -22,6 +22,9 @@ _CONFIG_KEYS: list[tuple[str, type]] = [
     ("camoufox_enabled", bool),
     ("camoufox_timeout", int),
     ("camoufox_url", str),
+    ("suggest_searxng_url", str),
+    ("suggest_use_llm_expand", bool),
+    ("suggest_use_llm_rerank", bool),
 ]
 
 

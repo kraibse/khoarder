@@ -1,0 +1,200 @@
+"""Orchestrator — fan out across providers, dedupe, rank, paginate.
+
+`suggest()` is the only public entry point. It expects a `TopicContext`
+(built by the route handler from the topic + sample entries) and returns
+a flat ranked list of `Suggestion` objects.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.models.entry import Entry
+from app.models.topic import Topic
+from app.services import config as config_svc
+from app.services.suggest.base import Provider, Suggestion, TopicContext
+from app.services.suggest.providers import (
+    ArxivProvider,
+    HackerNewsProvider,
+    OpenAlexProvider,
+    SemanticScholarProvider,
+    WikipediaProvider,
+)
+from app.services.suggest.searxng import SearXNGProvider
+from app.services.suggest import llm
+
+logger = logging.getLogger(__name__)
+
+
+# ── Provider registry ───────────────────────────────────────────────────
+def _always_on_providers() -> list[Provider]:
+    return [
+        WikipediaProvider(),
+        ArxivProvider(),
+        SemanticScholarProvider(),
+        OpenAlexProvider(),
+        HackerNewsProvider(),
+    ]
+
+
+async def _build_providers(db: AsyncSession) -> list[Provider]:
+    providers: list[Provider] = list(_always_on_providers())
+
+    searxng_url = await config_svc.get_config_value(db, "suggest_searxng_url", default=settings.suggest_searxng_url)
+    if searxng_url and searxng_url.strip():
+        providers.append(SearXNGProvider(searxng_url.strip()))
+
+    return providers
+
+
+# ── Topic context helpers ───────────────────────────────────────────────
+async def build_topic_context(
+    db: AsyncSession,
+    topic: Topic,
+    refine_query: str = "",
+    sample_size: int = 8,
+) -> TopicContext:
+    titles_result = await db.execute(
+        select(Entry.title).where(Entry.topic_id == topic.id).limit(sample_size)
+    )
+    sample_titles = [r for r in titles_result.scalars().all() if r]
+
+    from app.models.tag import Tag, entry_tags
+    tag_result = await db.execute(
+        select(Tag.name)
+        .join(entry_tags, Tag.id == entry_tags.c.tag_id)
+        .join(Entry, Entry.id == entry_tags.c.entry_id)
+        .where(Entry.topic_id == topic.id)
+        .group_by(Tag.name)
+        .order_by(func.count().desc())
+        .limit(12)
+    )
+    sample_tags = [r for r in tag_result.scalars().all() if r]
+
+    return TopicContext(
+        name=topic.name,
+        description=topic.description or "",
+        sample_titles=sample_titles,
+        sample_tags=sample_tags,
+        refine_query=refine_query.strip(),
+    )
+
+
+def _build_query_set(ctx: TopicContext, expansions: list[str]) -> list[str]:
+    base = (ctx.refine_query or ctx.name).strip()
+    queries: list[str] = []
+    if base:
+        queries.append(base)
+    if not ctx.refine_query and ctx.description:
+        queries.append(f"{ctx.name} {ctx.description}".strip())
+    queries.extend(expansions)
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in queries:
+        norm = re.sub(r"\s+", " ", q.strip().lower())
+        if norm and norm not in seen:
+            seen.add(norm)
+            out.append(q.strip())
+    return out[:4]   # cap fan-out width
+
+
+# ── Ranking ─────────────────────────────────────────────────────────────
+def _keyword_overlap(text: str, keywords: list[str]) -> float:
+    if not keywords or not text:
+        return 0.0
+    text_l = text.lower()
+    hits = sum(1 for k in keywords if k in text_l)
+    return min(1.0, hits / max(3, len(keywords)))
+
+
+def _score(s: Suggestion, ctx: TopicContext, weight_map: dict[str, float]) -> float:
+    keywords = ctx.keywords()
+    overlap = _keyword_overlap(f"{s.title}\n{s.excerpt}\n{' '.join(s.tags)}", keywords)
+    src_weight = weight_map.get(s.provider, 1.0)
+    base = max(s.relevance, 0.4)   # provider's own hint
+    return min(1.0, base * 0.4 + overlap * 0.55 * src_weight + 0.05)
+
+
+def _dedupe(suggestions: list[Suggestion]) -> list[Suggestion]:
+    seen: set[str] = set()
+    out: list[Suggestion] = []
+    for s in suggestions:
+        key = (s.source_url or s.id).split("?")[0].rstrip("/")
+        if key and key not in seen:
+            seen.add(key)
+            out.append(s)
+    return out
+
+
+# ── Public entry point ──────────────────────────────────────────────────
+async def suggest(
+    db: AsyncSession,
+    topic: Topic,
+    refine_query: str = "",
+    offset: int = 0,
+    limit: int = 5,
+) -> list[Suggestion]:
+    ctx = await build_topic_context(db, topic, refine_query=refine_query)
+    providers = await _build_providers(db)
+    weight_map = {p.name: p.weight for p in providers}
+
+    use_expand = (await config_svc.get_config_value(
+        db, "suggest_use_llm_expand", default=str(settings.suggest_use_llm_expand).lower()
+    )).lower() in ("true", "1", "yes")
+    use_rerank = (await config_svc.get_config_value(
+        db, "suggest_use_llm_rerank", default=str(settings.suggest_use_llm_rerank).lower()
+    )).lower() in ("true", "1", "yes")
+
+    expansions: list[str] = []
+    if use_expand:
+        expansions = await llm.expand_query(db, ctx)
+
+    queries = _build_query_set(ctx, expansions)
+    if not queries:
+        return []
+
+    # Fan out: each provider × each query → flatten
+    per_provider_per_query = max(4, (limit + offset) // max(1, len(providers)) + 2)
+    tasks = []
+    for p in providers:
+        for q in queries:
+            tasks.append(p.fetch(q, limit=per_provider_per_query))
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    flat: list[Suggestion] = []
+    for r in raw_results:
+        if isinstance(r, Exception):
+            logger.warning("provider error: %s", r)
+            continue
+        flat.extend(r)
+
+    # Drop suggestions whose canonical URL is already an entry in this topic.
+    if flat:
+        url_result = await db.execute(
+            select(Entry.source_url).where(Entry.topic_id == topic.id, Entry.source_url.isnot(None))
+        )
+        existing_urls = {(u or "").rstrip("/") for u in url_result.scalars().all() if u}
+        if existing_urls:
+            flat = [s for s in flat if (s.source_url or "").rstrip("/") not in existing_urls]
+
+    deduped = _dedupe(flat)
+    for s in deduped:
+        s.relevance = _score(s, ctx, weight_map)
+    deduped.sort(key=lambda s: s.relevance, reverse=True)
+
+    # Optional LLM rerank on top-N
+    if use_rerank and deduped:
+        top_n = deduped[: max(20, offset + limit + 5)]
+        scores = await llm.rerank(db, ctx, top_n)
+        if scores:
+            for s in top_n:
+                if s.id in scores:
+                    s.relevance = max(s.relevance, scores[s.id])
+            deduped.sort(key=lambda s: s.relevance, reverse=True)
+
+    return deduped[offset : offset + limit]

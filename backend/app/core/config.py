@@ -23,5 +23,10 @@ class Settings(BaseSettings):
     camoufox_timeout: int = 30                              # seconds to wait for page load
     camoufox_url: str = "http://camoufox-browser:3392"     # URL of the camoufox-browser container
 
+    # Find-more discovery — pluggable providers + optional LLM steps
+    suggest_searxng_url: str = ""                # optional self-hosted SearXNG base URL
+    suggest_use_llm_expand: bool = False         # let LM Studio invent extra search queries
+    suggest_use_llm_rerank: bool = False         # let LM Studio rerank candidates by topic relevance
+
 
 settings = Settings()
