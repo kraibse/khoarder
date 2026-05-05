@@ -88,8 +88,8 @@ async def _camoufox_params(db: AsyncSession) -> dict:
     """Load camoufox extraction params from runtime config."""
     cf_enabled = (await config_svc.get_config_value(db, "camoufox_enabled", default="false")).lower() in ("true", "1")
     cf_timeout = int(await config_svc.get_config_value(db, "camoufox_timeout", default=str(settings.camoufox_timeout)))
-    cf_headless = (await config_svc.get_config_value(db, "camoufox_headless", default="true")).lower() in ("true", "1")
-    return {"camoufox_enabled": cf_enabled, "camoufox_timeout": cf_timeout, "camoufox_headless": cf_headless}
+    cf_url = await config_svc.get_config_value(db, "camoufox_url", default=settings.camoufox_url)
+    return {"camoufox_enabled": cf_enabled, "camoufox_timeout": cf_timeout, "camoufox_url": cf_url}
 
 
 @router.post("/preview-import-url", response_model=URLPreviewOut)

@@ -63,7 +63,7 @@ async function handleSave() {
       auto_tag_count: config.value.auto_tag_count,
       camoufox_enabled: config.value.camoufox_enabled,
       camoufox_timeout: config.value.camoufox_timeout,
-      camoufox_headless: config.value.camoufox_headless,
+      camoufox_url: config.value.camoufox_url,
     })
     success.value = true
     setTimeout(() => (success.value = false), 3000)
@@ -299,15 +299,14 @@ async function handleCfCheck() {
                 </div>
 
                 <div>
-                  <label class="mb-1 block text-sm text-ink-2">Mode</label>
-                  <select
-                    v-model="config.camoufox_headless"
+                  <label class="mb-1 block text-sm text-ink-2">Service URL</label>
+                  <input
+                    v-model="config.camoufox_url"
+                    type="text"
+                    placeholder="http://camoufox-browser:3392"
                     class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
-                  >
-                    <option :value="true">Headless (no window)</option>
-                    <option :value="false">Visible (show browser)</option>
-                  </select>
-                  <p class="mt-1 text-xs text-ink-3">Headless is recommended for server use.</p>
+                  />
+                  <p class="mt-1 text-xs text-ink-3">URL of the camoufox-browser container.</p>
                 </div>
               </div>
             </div>
@@ -341,25 +340,25 @@ async function handleCfCheck() {
                 </template>
               </div>
 
-              <!-- Install instructions -->
+              <!-- Setup instructions -->
               <div v-if="cfStatus && !cfStatus.browser_ready" class="mt-4 rounded-lg border border-line bg-surface-2 px-4 py-3">
                 <p class="mb-2 text-[12px] font-medium text-ink-2">Setup instructions</p>
                 <ol class="space-y-1.5 text-[12px] text-ink-3">
-                  <li v-if="!cfStatus.installed">
+                  <li>
                     <span class="mr-1 font-medium text-ink-2">1.</span>
-                    Install the package:
-                    <code class="ml-1 rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[11px] text-ink">pip install camoufox</code>
+                    Start the container:
+                    <code class="ml-1 rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[11px] text-ink">docker compose up camoufox-browser</code>
                   </li>
                   <li>
-                    <span class="mr-1 font-medium text-ink-2">{{ cfStatus.installed ? '1.' : '2.' }}</span>
-                    Download the browser binary:
-                    <code class="ml-1 rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[11px] text-ink">python -m camoufox fetch</code>
+                    <span class="mr-1 font-medium text-ink-2">2.</span>
+                    Set the service URL above and click <em>Check status</em> to verify.
                   </li>
                   <li>
-                    <span class="mr-1 font-medium text-ink-2">{{ cfStatus.installed ? '2.' : '3.' }}</span>
-                    Click <em>Check status</em> above to verify, then enable and save.
+                    <span class="mr-1 font-medium text-ink-2">3.</span>
+                    Enable the toggle and save.
                   </li>
                 </ol>
+                <p v-if="cfStatus.message" class="mt-2 text-[11px] text-ink-3 font-mono">{{ cfStatus.message }}</p>
               </div>
             </div>
           </section>

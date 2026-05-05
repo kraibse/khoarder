@@ -9,7 +9,7 @@ export interface ConfigOut {
   auto_tag_count: number
   camoufox_enabled: boolean
   camoufox_timeout: number
-  camoufox_headless: boolean
+  camoufox_url: string
 }
 
 export interface ConfigUpdate {
@@ -21,7 +21,7 @@ export interface ConfigUpdate {
   auto_tag_count?: number
   camoufox_enabled?: boolean
   camoufox_timeout?: number
-  camoufox_headless?: boolean
+  camoufox_url?: string
 }
 
 export interface HealthOut {

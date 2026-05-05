@@ -39,6 +39,18 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  camoufox-browser:
+    build:
+      context: ./camoufox-browser
+      dockerfile: Dockerfile
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3392/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+
   db:
     image: postgres:16-alpine
     environment:
