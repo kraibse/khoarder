@@ -6,8 +6,14 @@ import { useTopicsStore } from '@/stores/topics'
 import { useUIStore } from '@/stores/ui'
 import type { Density } from '@/stores/ui'
 
+const props = defineProps<{
+  findOpen?: boolean
+  findAvailable?: boolean
+}>()
+
 const emit = defineEmits<{
   openAdd: []
+  toggleFind: []
 }>()
 
 const topicsStore = useTopicsStore()
@@ -141,6 +147,24 @@ function clearSearch() {
       </div>
 
       <div class="w-px h-5 bg-line mx-0.5" />
+
+      <!-- Find more button — only when a real topic is selected -->
+      <button
+        v-if="props.findAvailable"
+        type="button"
+        :title="props.findOpen ? 'Close suggestions' : 'Suggest entries to add to this topic'"
+        :class="[
+          'h-8 px-3 rounded-[7px] text-xs font-medium flex items-center gap-[6px]',
+          'border whitespace-nowrap transition-colors duration-[120ms]',
+          props.findOpen
+            ? 'bg-accent-bg border-accent text-accent'
+            : 'bg-surface border-accent text-accent hover:bg-accent-bg',
+        ]"
+        @click="emit('toggleFind')"
+      >
+        <AppIcon name="sparkle" :size="13" />
+        Find more
+      </button>
 
       <!-- Add button -->
       <button

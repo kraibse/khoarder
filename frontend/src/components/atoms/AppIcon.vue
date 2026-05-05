@@ -53,6 +53,8 @@ const icons: Record<string, string> = {
   filter: `<path d="M2 4h12M4 8h8M6 12h4"/>`,
   sort: `<path d="M2 5h12M4 8h8M6 11h4"/>`,
   x: `<path d="M4 4l8 8M12 4l-8 8"/>`,
+  'external-link': `<path d="M9 2h5v5"/><path d="M14 2L7 9"/><path d="M12 9v4a1 1 0 01-1 1H3a1 1 0 01-1-1V5a1 1 0 011-1h4"/>`,
+  sparkle: `<path d="M5 2l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z"/><path d="M11 8l1 1.5 1.5 1-1.5 1-1 1.5-1-1.5-1.5-1 1.5-1 1-1.5z"/>`,
 }
 </script>
 

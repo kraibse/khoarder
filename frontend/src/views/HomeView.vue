@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import AppTopBar from '@/components/organisms/AppTopBar.vue'
 import MasonryGrid from '@/components/organisms/MasonryGrid.vue'
+import FindMoreSidebar from '@/components/organisms/FindMoreSidebar.vue'
 import FilterChip from '@/components/atoms/FilterChip.vue'
 import AddModal from '@/components/molecules/AddModal.vue'
 import { useTopicsStore } from '@/stores/topics'
@@ -15,7 +16,21 @@ const uiStore = useUIStore()
 const entriesStore = useEntriesStore()
 
 const showAdd = ref(false)
+const findOpen = ref(false)
 const filters: FilterOption[] = ['All', 'Articles', 'Notes', 'Papers', 'Excerpts', 'References']
+
+const findTopic = computed(() => {
+  if (uiStore.activeSmartView) return null
+  const tid = topicsStore.activeTopicId
+  if (['all', 'starred', 'inbox', 'home'].includes(tid)) return null
+  return topicsStore.activeTopic ?? null
+})
+
+const findAvailable = computed(() => findTopic.value !== null)
+
+watch(findAvailable, (avail) => {
+  if (!avail) findOpen.value = false
+})
 
 const topicStats = computed(() => {
   const topic = topicsStore.activeTopic
@@ -109,9 +124,15 @@ watch(
 
     <!-- Main column -->
     <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
-      <AppTopBar @open-add="showAdd = true" />
+      <AppTopBar
+        :find-open="findOpen"
+        :find-available="findAvailable"
+        @open-add="showAdd = true"
+        @toggle-find="findOpen = !findOpen"
+      />
 
-      <main class="flex-1 overflow-y-auto p-6">
+      <div class="flex flex-1 min-h-0">
+      <main class="flex-1 overflow-y-auto p-6 min-w-0">
         <!-- Topic description strip — hidden during cross-topic search OR active search -->
         <div
           v-if="topicsStore.activeTopic && !uiStore.searchAllTopics && !isSearchingActive"
@@ -189,6 +210,16 @@ watch(
         <!-- Masonry grid -->
         <MasonryGrid :entries="entriesStore.filteredEntries" @deleted="reload()" />
       </main>
+
+      <Transition name="slide-right">
+        <FindMoreSidebar
+          v-if="findOpen && findTopic"
+          :topic="findTopic"
+          @close="findOpen = false"
+          @added="topicsStore.loadTopics(); reload()"
+        />
+      </Transition>
+      </div>
     </div>
 
     <!-- Add modal -->
