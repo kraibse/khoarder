@@ -216,7 +216,10 @@ async def suggest(
             ]
             ce_scores = ce.predict(pairs)
             for i, s in enumerate(top_n):
-                s.relevance = 0.45 * s.relevance + 0.55 * float(ce_scores[i])
+                raw = float(ce_scores[i])
+                # cross-encoder returns raw logits — sigmoid to [0,1]
+                norm = 1.0 / (1.0 + (2.718281828459045 ** -raw))
+                s.relevance = 0.45 * s.relevance + 0.55 * norm
             top_n.sort(key=lambda s: s.relevance, reverse=True)
             deduped[: len(top_n)] = top_n
         except Exception as exc:

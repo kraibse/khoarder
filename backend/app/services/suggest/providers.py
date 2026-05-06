@@ -88,7 +88,7 @@ class ArxivProvider(Provider):
     async def fetch(self, query: str, limit: int = 10) -> list[Suggestion]:
         if not query.strip():
             return []
-        url = "http://export.arxiv.org/api/query"
+        url = "https://export.arxiv.org/api/query"
         params = {
             "search_query": f"all:{query}",
             "max_results": str(limit),
