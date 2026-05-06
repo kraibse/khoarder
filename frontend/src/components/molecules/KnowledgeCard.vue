@@ -10,6 +10,7 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 import { updateEntry, deleteEntry } from '@/api/entries'
 import { useEntriesStore } from '@/stores/entries'
 import { useUIStore } from '@/stores/ui'
+import { useTopicsStore } from '@/stores/topics'
 
 const props = defineProps<{
   entry: Entry
@@ -18,11 +19,19 @@ const props = defineProps<{
 }>()
 
 const uiStore = useUIStore()
-
+const topicsStore = useTopicsStore()
 const router = useRouter()
 const entriesStore = useEntriesStore()
 const menuPos = ref<{ x: number; y: number } | null>(null)
 const isStarred = ref(props.entry.isStarred)
+
+const showTagEditor = ref(false)
+const tagInput = ref('')
+const tagLoading = ref(false)
+
+const showMovePicker = ref(false)
+const moveTargetTopicId = ref<string | null>(null)
+const moveLoading = ref(false)
 
 function openCard() {
   const q = uiStore.searchQuery.trim()
@@ -80,8 +89,62 @@ async function handleAction(label: string) {
     } catch (e) {
       console.error('Failed to delete entry:', e)
     }
-  } else {
-    console.log(label, props.entry.id)
+  } else if (label === 'Open') {
+    openCard()
+  } else if (label === 'Open in New Tab') {
+    const q = uiStore.searchQuery.trim()
+    const url = router.resolve({
+      name: 'article',
+      params: { id: props.entry.id },
+      ...(q ? { query: { q } } : {}),
+    }).href
+    window.open(url, '_blank')
+  } else if (label === 'Copy link') {
+    const q = uiStore.searchQuery.trim()
+    const url = window.location.origin + router.resolve({
+      name: 'article',
+      params: { id: props.entry.id },
+      ...(q ? { query: { q } } : {}),
+    }).href
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch (e) {
+      console.error('Failed to copy link:', e)
+    }
+  } else if (label === 'Edit tags') {
+    tagInput.value = (props.entry.tags ?? []).join(', ')
+    showTagEditor.value = true
+  } else if (label === 'Move to…') {
+    moveTargetTopicId.value = props.entry.topicId
+    showMovePicker.value = true
+  }
+}
+
+async function saveTags() {
+  tagLoading.value = true
+  try {
+    const tags = tagInput.value.split(',').map((t) => t.trim()).filter(Boolean)
+    await updateEntry(props.entry.id, { tags })
+    entriesStore.patchEntry(props.entry.id, { tags })
+    showTagEditor.value = false
+  } catch (e) {
+    console.error('Failed to save tags:', e)
+  } finally {
+    tagLoading.value = false
+  }
+}
+
+async function doMove() {
+  if (!moveTargetTopicId.value) return
+  moveLoading.value = true
+  try {
+    await updateEntry(props.entry.id, { topic_id: moveTargetTopicId.value })
+    showMovePicker.value = false
+    emit('deleted')
+  } catch (e) {
+    console.error('Failed to move entry:', e)
+  } finally {
+    moveLoading.value = false
   }
 }
 </script>
@@ -197,6 +260,79 @@ async function handleAction(label: string) {
       @close="menuPos = null"
       @action="handleAction"
     />
+
+    <!-- Tag editor modal -->
+    <Teleport to="body">
+      <Transition name="fade" appear>
+        <div
+          v-if="showTagEditor"
+          class="fixed inset-0 z-[200] flex items-center justify-center"
+          style="background: oklch(16% 0.01 60 / 0.35)"
+          @click.self="showTagEditor = false"
+        >
+          <div class="bg-surface border border-line rounded-[14px] p-6 w-[420px] max-w-[90vw] shadow-modal">
+            <h3 class="font-serif text-[18px] mb-4">Edit tags</h3>
+            <input
+              v-model="tagInput"
+              type="text"
+              placeholder="cognition, memory"
+              class="w-full h-10 px-3 border border-line rounded-[8px] bg-surface-2
+                     text-[13px] text-ink placeholder:text-ink-3 outline-none focus:border-accent mb-4"
+              @keydown.enter="saveTags"
+            />
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="flex-1 py-[9px] rounded-lg border border-line text-[13px] text-ink-3 hover:bg-surface-2"
+                @click="showTagEditor = false"
+              >Cancel</button>
+              <button
+                type="button"
+                :disabled="tagLoading"
+                class="flex-1 py-[9px] rounded-lg bg-accent text-[13px] text-white disabled:opacity-50"
+                @click="saveTags"
+              >{{ tagLoading ? 'Saving…' : 'Save' }}</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Move-to picker modal -->
+    <Teleport to="body">
+      <Transition name="fade" appear>
+        <div
+          v-if="showMovePicker"
+          class="fixed inset-0 z-[200] flex items-center justify-center"
+          style="background: oklch(16% 0.01 60 / 0.35)"
+          @click.self="showMovePicker = false"
+        >
+          <div class="bg-surface border border-line rounded-[14px] p-6 w-[420px] max-w-[90vw] shadow-modal">
+            <h3 class="font-serif text-[18px] mb-4">Move to topic</h3>
+            <select
+              v-model="moveTargetTopicId"
+              class="w-full h-10 px-3 border border-line rounded-[8px] bg-surface-2
+                     text-[13px] text-ink outline-none focus:border-accent mb-4"
+            >
+              <option v-for="t in topicsStore.topics" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </select>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="flex-1 py-[9px] rounded-lg border border-line text-[13px] text-ink-3 hover:bg-surface-2"
+                @click="showMovePicker = false"
+              >Cancel</button>
+              <button
+                type="button"
+                :disabled="moveLoading"
+                class="flex-1 py-[9px] rounded-lg bg-accent text-[13px] text-white disabled:opacity-50"
+                @click="doMove"
+              >{{ moveLoading ? 'Moving…' : 'Move' }}</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
