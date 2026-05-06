@@ -31,6 +31,18 @@ from app.services.suggest import llm
 logger = logging.getLogger(__name__)
 
 
+# ── Cross-encoder cache ─────────────────────────────────────────────────
+_cross_encoder = None
+
+
+def _get_cross_encoder():
+    global _cross_encoder
+    if _cross_encoder is None:
+        from sentence_transformers import CrossEncoder
+        _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _cross_encoder
+
+
 # ── Provider registry ───────────────────────────────────────────────────
 def _always_on_providers() -> list[Provider]:
     return [
@@ -59,10 +71,14 @@ async def build_topic_context(
     refine_query: str = "",
     sample_size: int = 8,
 ) -> TopicContext:
-    titles_result = await db.execute(
-        select(Entry.title).where(Entry.topic_id == topic.id).limit(sample_size)
+    entries_result = await db.execute(
+        select(Entry.title, Entry.excerpt).where(Entry.topic_id == topic.id).limit(sample_size)
     )
-    sample_titles = [r for r in titles_result.scalars().all() if r]
+    sample_entries = [
+        {"title": t, "excerpt": (e or "")[:240]}
+        for t, e in entries_result.all() if t
+    ]
+    sample_titles = [e["title"] for e in sample_entries]
 
     from app.models.tag import Tag, entry_tags
     tag_result = await db.execute(
@@ -82,6 +98,7 @@ async def build_topic_context(
         sample_titles=sample_titles,
         sample_tags=sample_tags,
         refine_query=refine_query.strip(),
+        sample_entries=sample_entries,
     )
 
 
@@ -186,6 +203,24 @@ async def suggest(
     for s in deduped:
         s.relevance = _score(s, ctx, weight_map)
     deduped.sort(key=lambda s: s.relevance, reverse=True)
+
+    # Cross-encoder rerank on top-N
+    if len(deduped) > 3:
+        try:
+            ce = _get_cross_encoder()
+            top_n = deduped[: max(20, offset + limit + 5)]
+            query = f"{ctx.name} {ctx.description} {' '.join(ctx.sample_titles[:3])}".strip()
+            pairs = [
+                [query, f"{s.title}\n{s.excerpt}"]
+                for s in top_n
+            ]
+            ce_scores = ce.predict(pairs)
+            for i, s in enumerate(top_n):
+                s.relevance = 0.45 * s.relevance + 0.55 * float(ce_scores[i])
+            top_n.sort(key=lambda s: s.relevance, reverse=True)
+            deduped[: len(top_n)] = top_n
+        except Exception as exc:
+            logger.warning("cross-encoder rerank failed: %s", exc)
 
     # Optional LLM rerank on top-N
     if use_rerank and deduped:
