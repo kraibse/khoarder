@@ -2,6 +2,8 @@
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
+# Install CPU-only torch first so sentence-transformers skips CUDA wheels
+RUN pip install --no-cache-dir --prefix=/install torch --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
@@ -24,6 +26,8 @@ CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", \
 FROM python:3.12-slim AS dev
 
 WORKDIR /app
+# Install CPU-only torch first so sentence-transformers skips CUDA wheels
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
