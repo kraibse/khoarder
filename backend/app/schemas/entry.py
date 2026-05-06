@@ -129,6 +129,7 @@ class EntryUpdate(BaseModel):
     source_label: str | None = None
     is_starred: bool | None = None
     img_url: str | None = None
+    topic_id: str | None = None
     tags: list[str] | None = None
 
     @field_validator("type")
