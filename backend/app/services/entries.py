@@ -839,7 +839,31 @@ async def extract_url_content(
         except Exception as exc:
             logger.warning("camoufox-browser call failed for %s: %s", url, exc)
 
-    partial = len(body.strip()) < 200
+    # ── Final bot-challenge guard ────────────────────────────────────────────────
+    # Extraction layers can still produce challenge text when static fetch hits
+    # a bot page and camoufox is unavailable. Detect that and return partial.
+    challenge_titles = [
+        "just a moment",
+        "attention required",
+        "checking your browser",
+        "security check",
+        "please wait",
+        "verify you are human",
+        "verify you're human",
+        "ddos protection",
+        "bot detection",
+        "captcha",
+        "cloudflare",
+        "blocked",
+        "access denied",
+    ]
+    title_lower = title.lower()
+    if _is_bot_challenge(body) or any(t in title_lower for t in challenge_titles):
+        body = ""
+        excerpt = ""
+        partial = True
+    else:
+        partial = len(body.strip()) < 200
 
     if not excerpt and body:
         first = body.split("\n\n")[0].strip()
