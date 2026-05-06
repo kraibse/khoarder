@@ -459,6 +459,27 @@ async def extract_url_content(
     has_img = False
     img_url = None
 
+    def _is_bot_challenge(text: str) -> bool:
+        lower = text.lower()
+        markers = [
+            "performing security verification",
+            "security verification",
+            "checking your browser",
+            "ddos protection",
+            "bot detection",
+            "captcha",
+            "cloudflare",
+            "please wait while we verify",
+            "please turn javascript on",
+            "javascript is required",
+            "enable javascript",
+            "page not found",
+            "sorry, the page you requested is unavailable",
+            "the link you requested might be broken",
+            "redirecting",
+        ]
+        return any(m in lower for m in markers)
+
     # ── Fetch ────────────────────────────────────────────────────────────────────
     html = ""
     fetch_failed = False
@@ -467,11 +488,14 @@ async def extract_url_content(
             resp = await client.get(url, headers=_BROWSER_HEADERS)
             resp.raise_for_status()
             html = resp.text
+            if _is_bot_challenge(html):
+                logger.warning("static fetch returned bot challenge for %s", url)
+                fetch_failed = True
     except Exception as exc:
         logger.warning("URL fetch failed for %s: %s", url, exc)
         fetch_failed = True
 
-    # ── Camoufox fallback when static fetch fails ────────────────────────────────
+    # ── Camoufox fallback when static fetch fails or returns bot page ────────────
     if fetch_failed and camoufox_enabled and camoufox_url:
         try:
             logger.debug("static fetch failed, trying camoufox-browser sidecar for %s", url)
@@ -620,8 +644,8 @@ async def extract_url_content(
 
     # ── Layer 4: camoufox-browser sidecar (HTTP, optional) ───────────────────────
     # POST to the camoufox-browser container; only runs when standard layers produced
-    # < 200 chars and the user has enabled camoufox in settings.
-    if not fetch_failed and camoufox_enabled and camoufox_url and len(body.strip()) < 200:
+    # < 200 chars, or the body looks like a bot challenge, and camoufox is enabled.
+    if not fetch_failed and camoufox_enabled and camoufox_url and (len(body.strip()) < 200 or _is_bot_challenge(body)):
         try:
             logger.debug("calling camoufox-browser sidecar for %s", url)
             async with httpx.AsyncClient(timeout=camoufox_timeout + 10) as cf_client:
