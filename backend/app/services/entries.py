@@ -487,6 +487,20 @@ async def extract_url_content(
             "please turn javascript on",
             "javascript is required",
             "enable javascript",
+            "javascript is disabled",
+            "we need to verify",
+            "you're not a robot",
+            "you are not a robot",
+            "robot verification",
+            "verify you are human",
+            "verify you're human",
+            "human verification",
+            "access denied",
+            "blocked",
+            "unusual traffic",
+            "automated access",
+            "please enable cookies",
+            "cookies are required",
             "page not found",
             "sorry, the page you requested is unavailable",
             "the link you requested might be broken",
@@ -658,8 +672,8 @@ async def extract_url_content(
 
     # ── Layer 4: camoufox-browser sidecar (HTTP, optional) ───────────────────────
     # POST to the camoufox-browser container; only runs when standard layers produced
-    # < 200 chars, or the body looks like a bot challenge, and camoufox is enabled.
-    if not fetch_failed and camoufox_enabled and camoufox_url and (len(body.strip()) < 200 or _is_bot_challenge(body)):
+    # < 200 chars, or the body / raw HTML looks like a bot challenge, and camoufox is enabled.
+    if not fetch_failed and camoufox_enabled and camoufox_url and (len(body.strip()) < 200 or _is_bot_challenge(body) or _is_bot_challenge(html)):
         try:
             logger.debug("calling camoufox-browser sidecar for %s", url)
             async with httpx.AsyncClient(timeout=camoufox_timeout + 10) as cf_client:
