@@ -38,8 +38,15 @@ _cross_encoder = None
 def _get_cross_encoder():
     global _cross_encoder
     if _cross_encoder is None:
-        from sentence_transformers import CrossEncoder
-        _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        try:
+            from sentence_transformers import CrossEncoder
+            _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        except ImportError as exc:
+            raise RuntimeError(
+                "sentence-transformers is not installed. "
+                "Install it to enable cross-encoder reranking: "
+                "pip install sentence-transformers>=3.0"
+            ) from exc
     return _cross_encoder
 
 
