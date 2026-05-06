@@ -131,10 +131,30 @@ def _keyword_overlap(text: str, keywords: list[str]) -> float:
 
 def _score(s: Suggestion, ctx: TopicContext, weight_map: dict[str, float]) -> float:
     keywords = ctx.keywords()
-    overlap = _keyword_overlap(f"{s.title}\n{s.excerpt}\n{' '.join(s.tags)}", keywords)
+    text = f"{s.title}\n{s.excerpt}\n{' '.join(s.tags)}".lower()
+    overlap = _keyword_overlap(text, keywords)
     src_weight = weight_map.get(s.provider, 1.0)
     base = max(s.relevance, 0.4)   # provider's own hint
-    return min(1.0, base * 0.4 + overlap * 0.55 * src_weight + 0.05)
+
+    # Topic-mismatch penalty: if result contains NONE of the core topic words, slash score
+    core_topic_words = [w for w in ctx.name.lower().split() if len(w) > 2]
+    core_topic_words += [w for w in (ctx.refine_query or "").lower().split() if len(w) > 2]
+    has_core = any(w in text for w in core_topic_words)
+    mismatch_penalty = 0.55 if has_core else 0.15
+
+    # Boost for matching existing entry titles (strong signal of relevance)
+    title_boost = 0.0
+    for entry_title in ctx.sample_titles:
+        entry_words = [w.strip(",.!?;:\"'()[]") for w in entry_title.lower().split() if len(w.strip(",.!?;:\"'()[]")) > 2]
+        if entry_words and all(w in text for w in entry_words[:3]):  # match first 3 significant words
+            title_boost = 0.15
+            break
+        # Partial match: at least 2 words from any entry title
+        matches = sum(1 for w in entry_words if w in text)
+        if len(entry_words) >= 2 and matches >= 2:
+            title_boost = max(title_boost, 0.08)
+
+    return min(1.0, base * 0.35 + overlap * 0.5 * src_weight * mismatch_penalty + title_boost + 0.05)
 
 
 def _dedupe(suggestions: list[Suggestion]) -> list[Suggestion]:
@@ -209,7 +229,32 @@ async def suggest(
         try:
             ce = _get_cross_encoder()
             top_n = deduped[: max(20, offset + limit + 5)]
-            query = f"{ctx.name} {ctx.description} {' '.join(ctx.sample_titles[:3])}".strip()
+            # Build focused query from high-signal terms only
+            core_terms = [ctx.name]
+            if ctx.refine_query:
+                core_terms.append(ctx.refine_query)
+            # Add key description words (skip stop words)
+            desc_words = [
+                w.strip(",.!?;:\"'()[]")
+                for w in (ctx.description or "").lower().split()
+                if len(w.strip(",.!?;:\"'()[]")) > 3
+                and w.strip(",.!?;:\"'()[]") not in {
+                    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+                    "of", "with", "by", "from", "as", "is", "was", "are", "were", "be",
+                    "been", "being", "have", "has", "had", "will", "would", "could",
+                    "should", "may", "might", "must", "can", "shall", "this", "that",
+                    "these", "those", "all", "any", "both", "each", "few", "more",
+                    "most", "other", "some", "such", "no", "nor", "not", "only",
+                    "own", "same", "so", "than", "too", "very", "just", "now", "then",
+                    "also", "about", "into", "through", "during", "before", "after",
+                    "above", "below", "up", "down", "out", "off", "over", "under",
+                    "again", "further", "once", "here", "there", "type", "types",
+                    "currently", "recently", "earth",
+                }
+            ]
+            core_terms.extend(desc_words[:5])  # top 5 description words
+            core_terms.extend(ctx.sample_titles[:3])
+            query = " ".join(core_terms).strip()
             pairs = [
                 [query, f"{s.title}\n{s.excerpt}"]
                 for s in top_n

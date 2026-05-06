@@ -58,15 +58,41 @@ class TopicContext:
             self.sample_entries = []
 
     def keywords(self) -> list[str]:
-        """Tokenized keyword set used for overlap ranking."""
+        """Tokenized keyword set used for overlap ranking.
+        Filters out English stop words so description noise doesn't dilute signal."""
+        _stop = {
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "as", "is", "was", "are", "were", "be",
+            "been", "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "must", "can", "shall",
+            "this", "that", "these", "those", "i", "you", "he", "she", "it", "we",
+            "they", "me", "him", "her", "us", "them", "my", "your", "his", "its",
+            "our", "their", "what", "which", "who", "when", "where", "why", "how",
+            "all", "any", "both", "each", "few", "more", "most", "other", "some",
+            "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too",
+            "very", "just", "now", "then", "also", "about", "into", "through",
+            "during", "before", "after", "above", "below", "up", "down", "out",
+            "off", "over", "under", "again", "further", "once", "here", "there",
+            "when", "where", "why", "how", "all", "each", "both", "few", "more",
+            "most", "other", "some", "such", "only", "own", "same", "than", "too",
+            "very", "just", "don", "should", "now", "type", "types", "currently",
+            "recently", "earth",
+        }
         terms: list[str] = []
         for src in (self.name, self.description, self.refine_query):
             for tok in src.lower().split():
                 tok = tok.strip(",.!?;:\"'()[]")
-                if len(tok) > 2:
+                if len(tok) > 2 and tok not in _stop:
                     terms.append(tok)
         for tag in self.sample_tags:
-            terms.append(tag.lower())
+            t = tag.lower().strip(",.!?;:\"'()[]")
+            if t and t not in _stop:
+                terms.append(t)
+        for title in self.sample_titles:
+            for tok in title.lower().split():
+                tok = tok.strip(",.!?;:\"'()[]")
+                if len(tok) > 2 and tok not in _stop:
+                    terms.append(tok)
         # Dedupe preserving order
         seen: set[str] = set()
         out: list[str] = []
