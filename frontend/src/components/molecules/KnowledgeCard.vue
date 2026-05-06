@@ -125,9 +125,9 @@ async function handleAction(label: string) {
           {{ entry.title }}
         </h2>
 
-        <!-- Excerpt — hidden when we have rich multi-hit excerpts below -->
+        <!-- Excerpt — always show when available -->
         <div
-          v-if="showExcerpt !== false && !(entry.headlines && entry.headlines.length > 0)"
+          v-if="showExcerpt !== false && entry.excerpt"
           class="text-xs text-ink-2 leading-[1.55] line-clamp-3"
         >
           <!-- eslint-disable-next-line vue/no-v-html -->
