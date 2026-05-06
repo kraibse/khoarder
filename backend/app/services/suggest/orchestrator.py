@@ -235,4 +235,15 @@ async def suggest(
                     s.relevance = max(s.relevance, scores[s.id])
             deduped.sort(key=lambda s: s.relevance, reverse=True)
 
+    # Normalize to [0.1, 1.0] so top result shows ~95% and bottom ~10%
+    if deduped:
+        vals = [s.relevance for s in deduped]
+        lo, hi = min(vals), max(vals)
+        if hi > lo:
+            for s in deduped:
+                s.relevance = 0.1 + 0.9 * (s.relevance - lo) / (hi - lo)
+        else:
+            for s in deduped:
+                s.relevance = 0.5
+
     return deduped[offset : offset + limit]
