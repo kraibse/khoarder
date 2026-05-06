@@ -119,6 +119,7 @@ export interface EntryUpdate {
   source_label?: string | null
   img_url?: string | null
   is_starred?: boolean
+  topic_id?: string | null
   tags?: string[]
 }
 
