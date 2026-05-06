@@ -426,6 +426,119 @@ def _extract_lxml_fallback(html: str, url: str) -> str:
         return ""
 
 
+def _is_youtube_url(url: str) -> tuple[bool, str]:
+    """Check if URL is YouTube and return (is_youtube, video_id)."""
+    from urllib.parse import urlparse, parse_qs
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in ("www.youtube.com", "youtube.com", "m.youtube.com"):
+        if parsed.path == "/watch":
+            return True, parse_qs(parsed.query).get("v", [""])[0]
+        if parsed.path.startswith("/embed/"):
+            return True, parsed.path.split("/")[2]
+        if parsed.path.startswith("/shorts/"):
+            return True, parsed.path.split("/")[2]
+    elif host == "youtu.be":
+        return True, parsed.path.lstrip("/")
+    return False, ""
+
+
+async def _youtube_extract(video_id: str) -> dict:
+    """Extract YouTube video metadata, transcript, and build embed body.
+
+    Returns dict with title, excerpt, body, has_img, img_url, partial.
+    """
+    import logging
+    import httpx
+
+    logger = logging.getLogger(__name__)
+    result = {
+        "title": f"YouTube video {video_id}",
+        "excerpt": "",
+        "body": "",
+        "has_img": True,
+        "img_url": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+        "partial": False,
+    }
+
+    # ── oEmbed metadata ──────────────────────────────────────────────────────────
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            oembed_url = (
+                "https://www.youtube.com/oembed"
+                f"?url=https://www.youtube.com/watch?v={video_id}&format=json"
+            )
+            resp = await client.get(oembed_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                result["title"] = data.get("title", result["title"])
+                result["excerpt"] = data.get("author_name", "")
+    except Exception as exc:
+        logger.debug("youtube oembed failed for %s: %s", video_id, exc)
+
+    # ── Transcript ───────────────────────────────────────────────────────────────
+    transcript_text = ""
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript_text = " ".join([item["text"] for item in transcript_list])
+    except ImportError:
+        logger.debug("youtube_transcript_api not installed")
+    except Exception as exc:
+        logger.debug("youtube transcript failed for %s: %s", video_id, exc)
+
+    # ── Summarize transcript via LM Studio if available ──────────────────────────
+    summary = ""
+    if transcript_text:
+        try:
+            from openai import AsyncOpenAI
+            from app.core.config import settings
+
+            if settings.llm_base_url.strip():
+                client = AsyncOpenAI(
+                    base_url=settings.llm_base_url.rstrip("/") + "/",
+                    api_key="not-needed",
+                    timeout=float(settings.llm_timeout),
+                )
+                response = await client.chat.completions.create(
+                    model=settings.llm_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Summarize the following video transcript in 3-5 sentences. "
+                                "Output only the summary, no preamble."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Title: {result['title']}\n\nTranscript:\n{transcript_text[:4000]}",
+                        },
+                    ],
+                    temperature=0.3,
+                    max_tokens=512,
+                )
+                summary = (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.debug("LM Studio summarization failed for youtube %s: %s", video_id, exc)
+
+    # ── Build body ───────────────────────────────────────────────────────────────
+    embed = (
+        f'<iframe width="100%" height="400" '
+        f'src="https://www.youtube.com/embed/{video_id}" '
+        f'frameborder="0" allowfullscreen></iframe>'
+    )
+    parts = [embed]
+    if summary:
+        parts.append(f"\n\n## Summary\n\n{summary}")
+    elif transcript_text:
+        parts.append(f"\n\n## Transcript\n\n{transcript_text[:3000]}")
+    result["body"] = "\n".join(parts)
+    return result
+
+
 async def extract_url_content(
     url: str,
     camoufox_enabled: bool = False,
@@ -543,6 +656,11 @@ async def extract_url_content(
 
     if not html:
         return {"title": title, "excerpt": "", "body": "", "has_img": False, "img_url": None, "partial": True}
+
+    # ── YouTube fast-path ────────────────────────────────────────────────────────
+    is_yt, yt_id = _is_youtube_url(url)
+    if is_yt and yt_id:
+        return await _youtube_extract(yt_id)
 
     # ── Meta (title / description / image) ───────────────────────────────────────
     meta_title, meta_desc, meta_img = _meta_extract(html, url)

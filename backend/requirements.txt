@@ -14,3 +14,4 @@ trafilatura>=1.8
 readability-lxml>=0.8.1
 lxml>=5.0
 sentence-transformers>=3.0
+youtube-transcript-api>=0.6
