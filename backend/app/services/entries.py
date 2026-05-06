@@ -1096,24 +1096,35 @@ async def update_entry(db: AsyncSession, entry_id: str, updates: "EntryUpdate") 
     if entry is None:
         return None
 
-    if updates.title is not None:
+    updated = set(updates.model_dump(exclude_unset=True).keys())
+
+    if "title" in updated:
         entry.title = updates.title
-    if updates.type is not None:
+    if "type" in updated:
         entry.type = updates.type
-    if updates.body is not None:
+    if "body" in updated:
         entry.body = updates.body
         entry.word_count = len(updates.body.split())
         entry.read_time_min = max(1, round(entry.word_count / 200))
-    if updates.excerpt is not None:
+    if "excerpt" in updated:
         entry.excerpt = updates.excerpt
-    if updates.source_url is not None:
+    if "source_url" in updated:
         entry.source_url = updates.source_url
-    if updates.source_label is not None:
+    if "source_label" in updated:
         entry.source_label = updates.source_label
-    if updates.is_starred is not None:
+    if "is_starred" in updated:
         entry.is_starred = updates.is_starred
-    if updates.img_url is not None:
+    if "img_url" in updated:
         entry.img_url = updates.img_url
+    if "topic_id" in updated:
+        if updates.topic_id is not None:
+            from app.models.topic import Topic
+            topic_result = await db.execute(
+                select(Topic).where(Topic.id == updates.topic_id)
+            )
+            if topic_result.scalar_one_or_none() is None:
+                raise ValueError(f"Topic {updates.topic_id} not found")
+        entry.topic_id = updates.topic_id
 
     await db.flush()
 
