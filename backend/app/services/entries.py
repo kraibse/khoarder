@@ -297,11 +297,12 @@ async def _classify_entry(db: AsyncSession, title: str, excerpt: str, body: str)
         return None, None
 
 
-def _meta_extract(html: str) -> tuple[str, str, str | None]:
+def _meta_extract(html: str, base_url: str = "") -> tuple[str, str, str | None]:
     """Extract og:title (or <title>), meta description, og:image from raw HTML.
     Returns (title, description, img_url)."""
     import re
     import html as html_lib
+    from urllib.parse import urljoin
 
     title = ""
     description = ""
@@ -339,7 +340,20 @@ def _meta_extract(html: str) -> tuple[str, str, str | None]:
     ]:
         m = re.search(pat, html, re.IGNORECASE)
         if m:
-            img_url = m.group(1).strip()
+            raw = m.group(1).strip()
+            # Resolve relative URLs
+            if raw and base_url:
+                raw = urljoin(base_url, raw)
+            # Skip known non-hero images (site logos, generic assets)
+            lower = raw.lower()
+            skip_patterns = [
+                "arxiv-logo", "logo", "favicon", "icon", "avatar",
+                "/static/", "/assets/logo", "site_icon", "apple-touch-icon",
+            ]
+            if any(p in lower for p in skip_patterns):
+                raw = ""
+            if raw:
+                img_url = raw
             break
 
     return title, description, img_url
@@ -517,7 +531,7 @@ async def extract_url_content(
         return {"title": title, "excerpt": "", "body": "", "has_img": False, "img_url": None, "partial": True}
 
     # ── Meta (title / description / image) ───────────────────────────────────────
-    meta_title, meta_desc, meta_img = _meta_extract(html)
+    meta_title, meta_desc, meta_img = _meta_extract(html, url)
     if meta_title:
         title = meta_title
     if meta_desc:
@@ -680,7 +694,7 @@ async def extract_url_content(
                         logger.debug("camoufox+lxml succeeded for %s (%d chars)", url, len(body))
 
                 if html_cf:
-                    cf_title, cf_desc, cf_img = _meta_extract(html_cf)
+                    cf_title, cf_desc, cf_img = _meta_extract(html_cf, url)
                     if cf_title and not title:
                         title = cf_title
                     if cf_desc and not excerpt:
