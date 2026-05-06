@@ -47,12 +47,15 @@ class TopicContext:
     sample_titles: list[str] = None       # type: ignore[assignment]
     sample_tags: list[str] = None         # type: ignore[assignment]
     refine_query: str = ""
+    sample_entries: list[dict[str, str]] = None  # type: ignore[assignment]
 
     def __post_init__(self):
         if self.sample_titles is None:
             self.sample_titles = []
         if self.sample_tags is None:
             self.sample_tags = []
+        if self.sample_entries is None:
+            self.sample_entries = []
 
     def keywords(self) -> list[str]:
         """Tokenized keyword set used for overlap ranking."""

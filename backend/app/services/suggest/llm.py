@@ -114,13 +114,24 @@ async def rerank(
         }
         for s in candidates[:24]   # cap prompt size
     ]
+
+    entry_ctx = ""
+    if ctx.sample_entries:
+        entry_ctx = "Existing entries in this topic:\n" + "\n".join(
+            f"- {e['title']}: {e['excerpt'][:180]}"
+            for e in ctx.sample_entries[:5]
+        ) + "\n\n"
+
     prompt = (
-        "You are a relevance scorer. Given a topic and candidate articles, "
-        "rate each item from 0.0 (off-topic) to 1.0 (highly relevant) and report only "
-        "items you are confident about. Output STRICT JSON of the form "
+        "You are a relevance scorer for a knowledge base topic. "
+        "Rate each candidate from 0.0 (off-topic) to 1.0 (highly relevant). "
+        "Prefer sources that complement existing entries rather than duplicate them. "
+        "Report only items you are confident about. "
+        "Output STRICT JSON of the form "
         '[{"id":"...","score":0.0}, ...]. No prose.\n\n'
         f"Topic: {ctx.name}\n"
         f"Description: {ctx.description}\n"
+        f"{entry_ctx}"
         f"User refine query: {ctx.refine_query or '(none)'}\n\n"
         f"Candidates:\n{json.dumps(items, ensure_ascii=False)}"
     )
