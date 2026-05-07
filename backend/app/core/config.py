@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     camoufox_timeout: int = 60                              # seconds to wait for page load + JS challenge
     camoufox_url: str = "http://camoufox-browser:3392"     # URL of the camoufox-browser container
 
+    # FlareSolverr — Cloudflare challenge solver fallback (used after camoufox fails)
+    flaresolverr_url: str = "http://flaresolverr:8191"     # URL of the FlareSolverr container
+
     # Find-more discovery — pluggable providers + optional LLM steps
     suggest_searxng_url: str = ""                # optional self-hosted SearXNG base URL
     suggest_use_llm_expand: bool = False         # let LM Studio invent extra search queries
