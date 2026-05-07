@@ -7,6 +7,7 @@ import {
   updateConfig,
   checkHealth,
   checkCamoufoxStatus,
+  checkFlaresolverrStatus,
   type ConfigOut,
   type HealthOut,
   type CamoufoxStatusOut,
@@ -27,14 +28,19 @@ const checkingHealth = ref(false)
 const cfStatus = ref<CamoufoxStatusOut | null>(null)
 const checkingCf = ref(false)
 
+// FlareSolverr status
+const fsStatus = ref<CamoufoxStatusOut | null>(null)
+const checkingFs = ref(false)
+
 // Sidebar navigation
-type Section = 'lm-studio' | 'extension-drafting' | 'camoufox' | 'find-more'
+type Section = 'lm-studio' | 'extension-drafting' | 'camoufox' | 'flaresolverr' | 'find-more'
 const activeSection = ref<Section>('lm-studio')
 
 const sections: Array<{ id: Section; label: string; icon: string }> = [
   { id: 'lm-studio', label: 'LM Studio', icon: 'server' },
   { id: 'extension-drafting', label: 'Extension Drafting', icon: 'edit' },
   { id: 'camoufox', label: 'Camoufox', icon: 'globe' },
+  { id: 'flaresolverr', label: 'FlareSolverr', icon: 'shield' },
   { id: 'find-more', label: 'Find more', icon: 'sparkle' },
 ]
 
@@ -65,6 +71,7 @@ async function handleSave() {
       camoufox_enabled: config.value.camoufox_enabled,
       camoufox_timeout: config.value.camoufox_timeout,
       camoufox_url: config.value.camoufox_url,
+      flaresolverr_url: config.value.flaresolverr_url,
       suggest_searxng_url: config.value.suggest_searxng_url,
       suggest_use_llm_expand: config.value.suggest_use_llm_expand,
       suggest_use_llm_rerank: config.value.suggest_use_llm_rerank,
@@ -98,6 +105,18 @@ async function handleCfCheck() {
     cfStatus.value = { installed: false, browser_ready: false, message: e instanceof Error ? e.message : 'Check failed' }
   } finally {
     checkingCf.value = false
+  }
+}
+
+async function handleFsCheck() {
+  checkingFs.value = true
+  fsStatus.value = null
+  try {
+    fsStatus.value = await checkFlaresolverrStatus()
+  } catch (e) {
+    fsStatus.value = { installed: false, browser_ready: false, message: e instanceof Error ? e.message : 'Check failed' }
+  } finally {
+    checkingFs.value = false
   }
 }
 </script>
@@ -364,6 +383,64 @@ async function handleCfCheck() {
                 </ol>
                 <p v-if="cfStatus.message" class="mt-2 text-[11px] text-ink-3 font-mono">{{ cfStatus.message }}</p>
               </div>
+            </div>
+          </section>
+
+          <!-- FlareSolverr ───────────────────────────────────────────────── -->
+          <section v-else-if="activeSection === 'flaresolverr'" class="space-y-5">
+            <div>
+              <h2 class="mb-0.5 text-[15px] font-semibold text-ink">FlareSolverr</h2>
+              <p class="text-[12.5px] text-ink-3">
+                Cloudflare challenge solver fallback. Used automatically when Camoufox
+                returns bot-challenge HTML or fails to extract content.
+              </p>
+            </div>
+
+            <div class="space-y-4">
+              <div>
+                <label class="mb-1 block text-sm text-ink-2">Service URL</label>
+                <input
+                  v-model="config.flaresolverr_url"
+                  type="text"
+                  placeholder="http://flaresolverr:8191"
+                  class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <p class="mt-1 text-xs text-ink-3">
+                  URL of the FlareSolverr container. Leave empty to disable.
+                </p>
+              </div>
+            </div>
+
+            <!-- Status check -->
+            <div class="border-t border-line pt-5">
+              <p class="mb-3 text-[12.5px] font-medium text-ink-2">Service status</p>
+
+              <div class="flex items-center gap-3">
+                <button
+                  class="rounded border border-line px-3 py-1.5 text-sm text-ink-2 hover:bg-surface-2 disabled:opacity-50"
+                  :disabled="checkingFs"
+                  @click="handleFsCheck"
+                >
+                  {{ checkingFs ? 'Checking…' : 'Check status' }}
+                </button>
+
+                <template v-if="fsStatus">
+                  <span v-if="fsStatus.browser_ready" class="flex items-center gap-1.5 text-sm text-green-600">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                    Ready
+                  </span>
+                  <span v-else-if="fsStatus.installed" class="flex items-center gap-1.5 text-sm text-amber-600">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Installed, not ready
+                  </span>
+                  <span v-else class="flex items-center gap-1.5 text-sm text-danger">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-danger" />
+                    Not installed
+                  </span>
+                </template>
+              </div>
+
+              <p v-if="fsStatus?.message" class="mt-2 text-[11px] text-ink-3 font-mono">{{ fsStatus.message }}</p>
             </div>
           </section>
 
