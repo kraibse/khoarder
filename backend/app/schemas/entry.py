@@ -118,6 +118,12 @@ class URLPreviewOut(BaseModel):
     img_url: str | None = None
     suggestion: TopicSuggestionOut | None = None
     partial: bool = False  # True when body content could not be fully extracted
+    # When partial=True, narrows the cause for the UI:
+    #   "javascript"     – page renders client-side and JS execution did not yield text
+    #   "bot_challenge"  – Cloudflare / anti-bot interstitial blocked the fetch
+    #   "blocked"        – HTTP error or hard block from the origin
+    #   "empty"          – fetched fine but no readable content was extracted
+    failure_reason: str | None = None
 
 
 class EntryUpdate(BaseModel):

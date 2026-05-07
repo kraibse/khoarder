@@ -542,7 +542,7 @@ async def _youtube_extract(video_id: str) -> dict:
 async def extract_url_content(
     url: str,
     camoufox_enabled: bool = False,
-    camoufox_timeout: int = 30,
+    camoufox_timeout: int = 60,
     camoufox_url: str = "",
 ) -> dict:
     """Fetch and extract content from a URL using a layered extraction strategy.
@@ -553,8 +553,9 @@ async def extract_url_content(
     3. lxml XPath — targets <article>/<main>/role=main and known content class names
     4. camoufox-browser sidecar (optional) — stealth headless browser accessed via HTTP
 
-    Returns dict: title, excerpt, body, has_img, img_url, partial.
+    Returns dict: title, excerpt, body, has_img, img_url, partial, failure_reason.
     partial=True signals the body is sparse and the user may want to paste content.
+    failure_reason narrows the cause when partial=True so the UI can explain it.
     """
     import re
     import logging
@@ -585,6 +586,29 @@ async def extract_url_content(
     body = ""
     has_img = False
     img_url = None
+    # Tracks why extraction came up empty so the UI can explain it.
+    # Values: None | "javascript" | "bot_challenge" | "blocked" | "empty"
+    failure_reason: str | None = None
+
+    def _looks_like_spa_shell(raw: str) -> bool:
+        """Heuristic: page is a JS-rendered SPA whose <body> is essentially empty.
+
+        Such pages return 200 OK and a complete-looking document but the body is
+        a single mount-point (`<div id="root"></div>` or similar). Static
+        extractors cannot recover content from them — only camoufox can.
+        """
+        if not raw:
+            return False
+        # Crude body-text heuristic: strip scripts/styles, then any tags, and
+        # see if anything substantial is left.
+        stripped = re.sub(r"<script\b[^>]*>.*?</script>", " ", raw, flags=re.IGNORECASE | re.DOTALL)
+        stripped = re.sub(r"<style\b[^>]*>.*?</style>", " ", stripped, flags=re.IGNORECASE | re.DOTALL)
+        # Restrict to <body> if present
+        body_match = re.search(r"<body\b[^>]*>(.*?)</body>", stripped, re.IGNORECASE | re.DOTALL)
+        candidate = body_match.group(1) if body_match else stripped
+        text_only = re.sub(r"<[^>]+>", " ", candidate)
+        text_only = re.sub(r"\s+", " ", text_only).strip()
+        return len(text_only) < 200
 
     def _is_bot_challenge(text: str) -> bool:
         lower = text.lower()
@@ -637,15 +661,17 @@ async def extract_url_content(
             if _is_bot_challenge(html):
                 logger.warning("static fetch returned bot challenge for %s", url)
                 fetch_failed = True
+                failure_reason = "bot_challenge"
     except Exception as exc:
         logger.warning("URL fetch failed for %s: %s", url, exc)
         fetch_failed = True
+        failure_reason = "blocked"
 
     # ── Camoufox fallback when static fetch fails or returns bot page ────────────
     if fetch_failed and camoufox_enabled and camoufox_url:
         try:
             logger.debug("static fetch failed, trying camoufox-browser sidecar for %s", url)
-            async with httpx.AsyncClient(timeout=camoufox_timeout + 10) as cf_client:
+            async with httpx.AsyncClient(timeout=camoufox_timeout + 15) as cf_client:
                 cf_resp = await cf_client.post(
                     camoufox_url.rstrip("/") + "/fetch",
                     json={"url": url, "timeout": camoufox_timeout},
@@ -653,15 +679,18 @@ async def extract_url_content(
             cf_data = cf_resp.json()
             if cf_data.get("status") == "ok":
                 cf_html = cf_data.get("html", "")
-                if _is_bot_challenge(cf_html):
+                cf_challenge = bool(cf_data.get("challenge")) or _is_bot_challenge(cf_html)
+                if cf_challenge:
                     logger.warning(
                         "camoufox returned bot-challenge HTML for %s (%d bytes); treating as failure",
                         url,
                         len(cf_html),
                     )
                     html = ""  # don't process challenge HTML further
+                    failure_reason = "bot_challenge"
                 else:
                     html = cf_html
+                    failure_reason = None
                     logger.debug("camoufox fetch succeeded for %s (%d bytes)", url, len(html))
             else:
                 logger.warning("camoufox-browser error for %s: %s", url, cf_data.get("message"))
@@ -669,7 +698,15 @@ async def extract_url_content(
             logger.warning("camoufox-browser call failed for %s: %s", url, exc)
 
     if not html:
-        return {"title": title, "excerpt": "", "body": "", "has_img": False, "img_url": None, "partial": True}
+        return {
+            "title": title,
+            "excerpt": "",
+            "body": "",
+            "has_img": False,
+            "img_url": None,
+            "partial": True,
+            "failure_reason": failure_reason or "blocked",
+        }
 
     # ── YouTube fast-path ────────────────────────────────────────────────────────
     is_yt, yt_id = _is_youtube_url(url)
@@ -803,12 +840,26 @@ async def extract_url_content(
                 logger.debug("lxml fallback used for %s (%d chars)", url, len(body))
 
     # ── Layer 4: camoufox-browser sidecar (HTTP, optional) ───────────────────────
-    # POST to the camoufox-browser container; only runs when standard layers produced
-    # < 200 chars, or the body / raw HTML looks like a bot challenge, and camoufox is enabled.
-    if not fetch_failed and camoufox_enabled and camoufox_url and (len(body.strip()) < 200 or _is_bot_challenge(body) or _is_bot_challenge(html)):
+    # Triggers when standard layers fall short:
+    #   - extracted body too short (< 200 chars)
+    #   - extracted body or raw HTML still contains bot-challenge text
+    #   - raw HTML looks like a JS-rendered SPA shell with no real body content
+    spa_shell = _looks_like_spa_shell(html)
+    needs_camoufox = (
+        len(body.strip()) < 200
+        or _is_bot_challenge(body)
+        or _is_bot_challenge(html)
+        or spa_shell
+    )
+    if not fetch_failed and camoufox_enabled and camoufox_url and needs_camoufox:
+        if spa_shell and not failure_reason:
+            failure_reason = "javascript"
         try:
-            logger.debug("calling camoufox-browser sidecar for %s", url)
-            async with httpx.AsyncClient(timeout=camoufox_timeout + 10) as cf_client:
+            logger.debug(
+                "calling camoufox-browser sidecar for %s (spa_shell=%s)",
+                url, spa_shell,
+            )
+            async with httpx.AsyncClient(timeout=camoufox_timeout + 15) as cf_client:
                 cf_resp = await cf_client.post(
                     camoufox_url.rstrip("/") + "/fetch",
                     json={"url": url, "timeout": camoufox_timeout},
@@ -816,13 +867,17 @@ async def extract_url_content(
             cf_data = cf_resp.json()
             if cf_data.get("status") == "ok":
                 html_cf = cf_data.get("html", "")
-                if _is_bot_challenge(html_cf):
+                cf_challenge = bool(cf_data.get("challenge")) or _is_bot_challenge(html_cf)
+                if cf_challenge:
                     logger.warning(
                         "camoufox returned bot-challenge HTML for %s (%d bytes); ignoring",
                         url,
                         len(html_cf),
                     )
+                    if not failure_reason:
+                        failure_reason = "bot_challenge"
                 else:
+                    extracted_more = False
                     try:
                         import trafilatura
                         cf_body = trafilatura.extract(
@@ -835,6 +890,7 @@ async def extract_url_content(
                         )
                         if cf_body and len(cf_body.strip()) > len(body):
                             body = cf_body.strip()
+                            extracted_more = True
                             logger.debug("camoufox+trafilatura succeeded for %s (%d chars)", url, len(body))
                     except Exception:
                         pass
@@ -843,6 +899,7 @@ async def extract_url_content(
                         fb = _extract_lxml_fallback(html_cf, url)
                         if len(fb) > len(body):
                             body = fb
+                            extracted_more = True
                             logger.debug("camoufox+lxml succeeded for %s (%d chars)", url, len(body))
 
                     if html_cf:
@@ -854,6 +911,9 @@ async def extract_url_content(
                         if cf_img and not img_url:
                             has_img = True
                             img_url = cf_img
+
+                    if extracted_more:
+                        failure_reason = None
             else:
                 logger.warning("camoufox-browser error for %s: %s", url, cf_data.get("message"))
         except Exception as exc:
@@ -882,8 +942,19 @@ async def extract_url_content(
         body = ""
         excerpt = ""
         partial = True
+        if not failure_reason:
+            failure_reason = "bot_challenge"
     else:
         partial = len(body.strip()) < 200
+
+    if partial and not failure_reason:
+        # No specific signal — distinguish JS-rendered SPA from a generic empty page.
+        if _looks_like_spa_shell(html):
+            failure_reason = "javascript"
+        else:
+            failure_reason = "empty"
+    elif not partial:
+        failure_reason = None
 
     if not excerpt and body:
         first = body.split("\n\n")[0].strip()
@@ -897,6 +968,7 @@ async def extract_url_content(
         "has_img": has_img,
         "img_url": img_url,
         "partial": partial,
+        "failure_reason": failure_reason,
     }
 
 

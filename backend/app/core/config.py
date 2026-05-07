@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Camoufox — stealth headless browser sidecar for JS-heavy / bot-protected sites
     camoufox_enabled: bool = False                          # use camoufox when standard extractors return empty content
-    camoufox_timeout: int = 30                              # seconds to wait for page load
+    camoufox_timeout: int = 60                              # seconds to wait for page load + JS challenge
     camoufox_url: str = "http://camoufox-browser:3392"     # URL of the camoufox-browser container
 
     # Find-more discovery — pluggable providers + optional LLM steps
