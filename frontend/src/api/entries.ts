@@ -155,6 +155,8 @@ export interface TopicPreviewRequest {
   feedback?: string | null
 }
 
+export type URLImportFailureReason = 'javascript' | 'bot_challenge' | 'blocked' | 'empty'
+
 export interface URLPreviewOut {
   title: string
   excerpt: string
@@ -163,6 +165,7 @@ export interface URLPreviewOut {
   img_url: string | null
   suggestion: TopicSuggestionOut | null
   partial: boolean  // true when full content could not be extracted automatically
+  failure_reason: URLImportFailureReason | null
 }
 
 export const previewTopic = (data: TopicPreviewRequest) =>

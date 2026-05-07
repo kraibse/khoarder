@@ -1,10 +1,33 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import TopicSuggestModal from '@/components/molecules/TopicSuggestModal.vue'
 import { useTopicsStore } from '@/stores/topics'
 import { createEntry, uploadAttachment, previewTopic, previewImportUrl } from '@/api/entries'
 import type { TopicSuggestionOut, URLPreviewOut } from '@/api/entries'
+
+const FAILURE_COPY: Record<string, { headline: string; detail: string }> = {
+  javascript: {
+    headline: 'This page renders content with JavaScript',
+    detail:
+      'The site loaded an empty shell that fills in via JS, and the headless browser could not capture the rendered text in time. Open the article in your browser and paste the content below, or save just the link.',
+  },
+  bot_challenge: {
+    headline: 'This site blocked the import with a bot check',
+    detail:
+      'A Cloudflare or similar verification page intercepted the fetch and did not clear within the timeout. Open the article yourself and paste the content below, or save just the link.',
+  },
+  blocked: {
+    headline: 'The site refused the request',
+    detail:
+      'The origin returned an error or refused to serve the page. Open it in your browser, copy the article text, and paste it below — or save just the link.',
+  },
+  empty: {
+    headline: "Article content couldn't be extracted",
+    detail:
+      'The page loaded but no readable article body was found. This happens with paywalls, login walls, or unusual layouts. Paste the content below, or save just the link.',
+  },
+}
 
 const emit = defineEmits<{
   close: []
@@ -31,6 +54,12 @@ const urlInput = ref('')
 const urlExtracted = ref<URLPreviewOut | null>(null)
 const showUrlPaste = ref(false)
 const manualBody = ref('')
+
+const failureCopy = computed(() => {
+  const reason = urlExtracted.value?.failure_reason
+  if (reason && FAILURE_COPY[reason]) return FAILURE_COPY[reason]
+  return FAILURE_COPY.empty
+})
 
 // Note mode
 const noteTitle = ref('')
@@ -339,11 +368,8 @@ const modes: Array<{ id: 'url' | 'note' | 'file'; label: string; sub: string; ic
             <div class="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-[8px] mb-4">
               <AppIcon name="alert" :size="14" class="text-amber-600 mt-[1px] shrink-0" />
               <div>
-                <p class="text-[12px] font-medium text-amber-800 leading-snug">Article content couldn't be extracted</p>
-                <p class="text-[11.5px] text-amber-700 mt-0.5 leading-snug">
-                  This happens with sites that use JavaScript rendering, bot protection (Cloudflare), or paywalls.
-                  We saved the title and description.
-                </p>
+                <p class="text-[12px] font-medium text-amber-800 leading-snug">{{ failureCopy.headline }}</p>
+                <p class="text-[11.5px] text-amber-700 mt-0.5 leading-snug">{{ failureCopy.detail }}</p>
               </div>
             </div>
 
