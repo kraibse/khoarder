@@ -589,14 +589,18 @@ async def extract_url_content(
     def _is_bot_challenge(text: str) -> bool:
         lower = text.lower()
         markers = [
+            "just a moment",
+            "attention required",
             "performing security verification",
             "security verification",
+            "security check",
             "checking your browser",
             "ddos protection",
             "bot detection",
             "captcha",
             "cloudflare",
             "please wait while we verify",
+            "please wait",
             "please turn javascript on",
             "javascript is required",
             "enable javascript",
@@ -618,6 +622,7 @@ async def extract_url_content(
             "sorry, the page you requested is unavailable",
             "the link you requested might be broken",
             "redirecting",
+            "ray id",
         ]
         return any(m in lower for m in markers)
 
@@ -647,8 +652,17 @@ async def extract_url_content(
                 )
             cf_data = cf_resp.json()
             if cf_data.get("status") == "ok":
-                html = cf_data.get("html", "")
-                logger.debug("camoufox fetch succeeded for %s (%d bytes)", url, len(html))
+                cf_html = cf_data.get("html", "")
+                if _is_bot_challenge(cf_html):
+                    logger.warning(
+                        "camoufox returned bot-challenge HTML for %s (%d bytes); treating as failure",
+                        url,
+                        len(cf_html),
+                    )
+                    html = ""  # don't process challenge HTML further
+                else:
+                    html = cf_html
+                    logger.debug("camoufox fetch succeeded for %s (%d bytes)", url, len(html))
             else:
                 logger.warning("camoufox-browser error for %s: %s", url, cf_data.get("message"))
         except Exception as exc:
@@ -802,38 +816,44 @@ async def extract_url_content(
             cf_data = cf_resp.json()
             if cf_data.get("status") == "ok":
                 html_cf = cf_data.get("html", "")
-
-                try:
-                    import trafilatura
-                    cf_body = trafilatura.extract(
-                        html_cf,
-                        url=url,
-                        include_comments=False,
-                        include_tables=True,
-                        favor_recall=True,
-                        output_format="markdown",
+                if _is_bot_challenge(html_cf):
+                    logger.warning(
+                        "camoufox returned bot-challenge HTML for %s (%d bytes); ignoring",
+                        url,
+                        len(html_cf),
                     )
-                    if cf_body and len(cf_body.strip()) > len(body):
-                        body = cf_body.strip()
-                        logger.debug("camoufox+trafilatura succeeded for %s (%d chars)", url, len(body))
-                except Exception:
-                    pass
+                else:
+                    try:
+                        import trafilatura
+                        cf_body = trafilatura.extract(
+                            html_cf,
+                            url=url,
+                            include_comments=False,
+                            include_tables=True,
+                            favor_recall=True,
+                            output_format="markdown",
+                        )
+                        if cf_body and len(cf_body.strip()) > len(body):
+                            body = cf_body.strip()
+                            logger.debug("camoufox+trafilatura succeeded for %s (%d chars)", url, len(body))
+                    except Exception:
+                        pass
 
-                if len(body.strip()) < 200:
-                    fb = _extract_lxml_fallback(html_cf, url)
-                    if len(fb) > len(body):
-                        body = fb
-                        logger.debug("camoufox+lxml succeeded for %s (%d chars)", url, len(body))
+                    if len(body.strip()) < 200:
+                        fb = _extract_lxml_fallback(html_cf, url)
+                        if len(fb) > len(body):
+                            body = fb
+                            logger.debug("camoufox+lxml succeeded for %s (%d chars)", url, len(body))
 
-                if html_cf:
-                    cf_title, cf_desc, cf_img = _meta_extract(html_cf, url)
-                    if cf_title and not title:
-                        title = cf_title
-                    if cf_desc and not excerpt:
-                        excerpt = cf_desc
-                    if cf_img and not img_url:
-                        has_img = True
-                        img_url = cf_img
+                    if html_cf:
+                        cf_title, cf_desc, cf_img = _meta_extract(html_cf, url)
+                        if cf_title and not title:
+                            title = cf_title
+                        if cf_desc and not excerpt:
+                            excerpt = cf_desc
+                        if cf_img and not img_url:
+                            has_img = True
+                            img_url = cf_img
             else:
                 logger.warning("camoufox-browser error for %s: %s", url, cf_data.get("message"))
         except Exception as exc:
