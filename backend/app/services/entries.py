@@ -539,11 +539,53 @@ async def _youtube_extract(video_id: str) -> dict:
     return result
 
 
+def _is_bot_challenge(text: str) -> bool:
+    lower = text.lower()
+    markers = [
+        "just a moment",
+        "attention required",
+        "performing security verification",
+        "security verification",
+        "security check",
+        "checking your browser",
+        "ddos protection",
+        "bot detection",
+        "captcha",
+        "cloudflare",
+        "please wait while we verify",
+        "please wait",
+        "please turn javascript on",
+        "javascript is required",
+        "enable javascript",
+        "javascript is disabled",
+        "we need to verify",
+        "you're not a robot",
+        "you are not a robot",
+        "robot verification",
+        "verify you are human",
+        "verify you're human",
+        "human verification",
+        "access denied",
+        "blocked",
+        "unusual traffic",
+        "automated access",
+        "please enable cookies",
+        "cookies are required",
+        "page not found",
+        "sorry, the page you requested is unavailable",
+        "the link you requested might be broken",
+        "redirecting",
+        "ray id",
+    ]
+    return any(m in lower for m in markers)
+
+
 async def extract_url_content(
     url: str,
     camoufox_enabled: bool = False,
     camoufox_timeout: int = 60,
     camoufox_url: str = "",
+    flaresolverr_url: str = "",
 ) -> dict:
     """Fetch and extract content from a URL using a layered extraction strategy.
 
@@ -610,45 +652,68 @@ async def extract_url_content(
         text_only = re.sub(r"\s+", " ", text_only).strip()
         return len(text_only) < 200
 
-    def _is_bot_challenge(text: str) -> bool:
-        lower = text.lower()
-        markers = [
-            "just a moment",
-            "attention required",
-            "performing security verification",
-            "security verification",
-            "security check",
-            "checking your browser",
-            "ddos protection",
-            "bot detection",
-            "captcha",
-            "cloudflare",
-            "please wait while we verify",
-            "please wait",
-            "please turn javascript on",
-            "javascript is required",
-            "enable javascript",
-            "javascript is disabled",
-            "we need to verify",
-            "you're not a robot",
-            "you are not a robot",
-            "robot verification",
-            "verify you are human",
-            "verify you're human",
-            "human verification",
-            "access denied",
-            "blocked",
-            "unusual traffic",
-            "automated access",
-            "please enable cookies",
-            "cookies are required",
-            "page not found",
-            "sorry, the page you requested is unavailable",
-            "the link you requested might be broken",
-            "redirecting",
-            "ray id",
-        ]
-        return any(m in lower for m in markers)
+    async def _try_flaresolverr() -> str | None:
+        if not flaresolverr_url:
+            return None
+        try:
+            logger.debug("trying flaresolverr for %s", url)
+            async with httpx.AsyncClient(timeout=camoufox_timeout + 15) as fs_client:
+                fs_resp = await fs_client.post(
+                    flaresolverr_url.rstrip("/") + "/v1",
+                    json={"cmd": "request.get", "url": url, "maxTimeout": camoufox_timeout * 1000},
+                )
+            fs_data = fs_resp.json()
+            if fs_data.get("status") == "ok":
+                fs_html = fs_data.get("solution", {}).get("response", "")
+                if fs_html and not _is_bot_challenge(fs_html):
+                    logger.debug("flaresolverr succeeded for %s (%d bytes)", url, len(fs_html))
+                    return fs_html
+                else:
+                    logger.warning("flaresolverr returned bot-challenge HTML for %s", url)
+            else:
+                logger.warning("flaresolverr error for %s: %s", url, fs_data.get("message"))
+        except Exception as exc:
+            logger.warning("flaresolverr call failed for %s: %s", url, exc)
+        return None
+
+    def _extract_browser_html(browser_html: str) -> bool:
+        nonlocal body, title, excerpt, has_img, img_url
+        extracted_more = False
+        try:
+            import trafilatura
+            cf_body = trafilatura.extract(
+                browser_html,
+                url=url,
+                include_comments=False,
+                include_tables=True,
+                favor_recall=True,
+                output_format="markdown",
+            )
+            if cf_body and len(cf_body.strip()) > len(body):
+                body = cf_body.strip()
+                extracted_more = True
+                logger.debug("browser+trafilatura succeeded for %s (%d chars)", url, len(body))
+        except Exception:
+            pass
+
+        if len(body.strip()) < 200:
+            fb = _extract_lxml_fallback(browser_html, url)
+            if len(fb) > len(body):
+                body = fb
+                extracted_more = True
+                logger.debug("browser+lxml succeeded for %s (%d chars)", url, len(body))
+
+        if browser_html:
+            cf_title, cf_desc, cf_img = _meta_extract(browser_html, url)
+            if cf_title and not title:
+                title = cf_title
+            if cf_desc and not excerpt:
+                excerpt = cf_desc
+            if cf_img and not img_url:
+                has_img = True
+                img_url = cf_img
+
+        return extracted_more
 
     # ── Fetch ────────────────────────────────────────────────────────────────────
     html = ""
@@ -696,6 +761,12 @@ async def extract_url_content(
                 logger.warning("camoufox-browser error for %s: %s", url, cf_data.get("message"))
         except Exception as exc:
             logger.warning("camoufox-browser call failed for %s: %s", url, exc)
+
+    if not html and flaresolverr_url:
+        fs_html = await _try_flaresolverr()
+        if fs_html:
+            html = fs_html
+            failure_reason = None
 
     if not html:
         return {
@@ -877,47 +948,25 @@ async def extract_url_content(
                     if not failure_reason:
                         failure_reason = "bot_challenge"
                 else:
-                    extracted_more = False
-                    try:
-                        import trafilatura
-                        cf_body = trafilatura.extract(
-                            html_cf,
-                            url=url,
-                            include_comments=False,
-                            include_tables=True,
-                            favor_recall=True,
-                            output_format="markdown",
-                        )
-                        if cf_body and len(cf_body.strip()) > len(body):
-                            body = cf_body.strip()
-                            extracted_more = True
-                            logger.debug("camoufox+trafilatura succeeded for %s (%d chars)", url, len(body))
-                    except Exception:
-                        pass
-
-                    if len(body.strip()) < 200:
-                        fb = _extract_lxml_fallback(html_cf, url)
-                        if len(fb) > len(body):
-                            body = fb
-                            extracted_more = True
-                            logger.debug("camoufox+lxml succeeded for %s (%d chars)", url, len(body))
-
-                    if html_cf:
-                        cf_title, cf_desc, cf_img = _meta_extract(html_cf, url)
-                        if cf_title and not title:
-                            title = cf_title
-                        if cf_desc and not excerpt:
-                            excerpt = cf_desc
-                        if cf_img and not img_url:
-                            has_img = True
-                            img_url = cf_img
-
+                    extracted_more = _extract_browser_html(html_cf)
                     if extracted_more:
                         failure_reason = None
             else:
                 logger.warning("camoufox-browser error for %s: %s", url, cf_data.get("message"))
         except Exception as exc:
             logger.warning("camoufox-browser call failed for %s: %s", url, exc)
+
+    # ── FlareSolverr fallback when camoufox failed or returned bot-challenge ──────
+    if not fetch_failed and flaresolverr_url and (
+        failure_reason == "bot_challenge"
+        or _is_bot_challenge(body)
+        or _is_bot_challenge(html)
+    ):
+        fs_html = await _try_flaresolverr()
+        if fs_html:
+            extracted_more = _extract_browser_html(fs_html)
+            if extracted_more:
+                failure_reason = None
 
     # ── Final bot-challenge guard ────────────────────────────────────────────────
     # Extraction layers can still produce challenge text when static fetch hits
