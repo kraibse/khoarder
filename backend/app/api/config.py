@@ -22,6 +22,7 @@ _CONFIG_KEYS: list[tuple[str, type]] = [
     ("camoufox_enabled", bool),
     ("camoufox_timeout", int),
     ("camoufox_url", str),
+    ("flaresolverr_url", str),
     ("suggest_searxng_url", str),
     ("suggest_use_llm_expand", bool),
     ("suggest_use_llm_rerank", bool),
@@ -109,6 +110,42 @@ async def camoufox_status(db: AsyncSession = Depends(get_db)):
             resp = await client.get(url.rstrip("/") + "/health")
         if resp.status_code == 200:
             return CamoufoxStatusOut(installed=True, browser_ready=True)
+        return CamoufoxStatusOut(
+            installed=True,
+            browser_ready=False,
+            message=f"Service returned HTTP {resp.status_code}.",
+        )
+    except Exception as exc:
+        return CamoufoxStatusOut(
+            installed=False,
+            browser_ready=False,
+            message=f"Unreachable: {exc}",
+        )
+
+
+@router.get("/flaresolverr-status", response_model=CamoufoxStatusOut)
+async def flaresolverr_status(db: AsyncSession = Depends(get_db)):
+    """Ping the FlareSolverr sidecar service and report its status."""
+    url = await svc.get_config_value(db, "flaresolverr_url", default=settings.flaresolverr_url)
+    if not url.strip():
+        return CamoufoxStatusOut(
+            installed=False,
+            browser_ready=False,
+            message="No service URL configured.",
+        )
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(url.rstrip("/") + "/")
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("status") == "ok":
+                return CamoufoxStatusOut(installed=True, browser_ready=True)
+            return CamoufoxStatusOut(
+                installed=True,
+                browser_ready=False,
+                message=f"Service status: {data.get('status')}",
+            )
         return CamoufoxStatusOut(
             installed=True,
             browser_ready=False,
