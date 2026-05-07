@@ -10,6 +10,7 @@ export interface ConfigOut {
   camoufox_enabled: boolean
   camoufox_timeout: number
   camoufox_url: string
+  flaresolverr_url: string
   suggest_searxng_url: string
   suggest_use_llm_expand: boolean
   suggest_use_llm_rerank: boolean
@@ -25,6 +26,7 @@ export interface ConfigUpdate {
   camoufox_enabled?: boolean
   camoufox_timeout?: number
   camoufox_url?: string
+  flaresolverr_url?: string
   suggest_searxng_url?: string
   suggest_use_llm_expand?: boolean
   suggest_use_llm_rerank?: boolean
@@ -50,3 +52,5 @@ export const updateConfig = (data: ConfigUpdate) =>
 export const checkHealth = () => apiFetch<HealthOut>('/config/health')
 
 export const checkCamoufoxStatus = () => apiFetch<CamoufoxStatusOut>('/config/camoufox-status')
+
+export const checkFlaresolverrStatus = () => apiFetch<CamoufoxStatusOut>('/config/flaresolverr-status')
