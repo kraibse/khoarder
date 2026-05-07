@@ -11,6 +11,7 @@ class ConfigOut(BaseModel):
     camoufox_enabled: bool
     camoufox_timeout: int
     camoufox_url: str
+    flaresolverr_url: str = ""
     suggest_searxng_url: str = ""
     suggest_use_llm_expand: bool = False
     suggest_use_llm_rerank: bool = False
@@ -26,6 +27,7 @@ class ConfigUpdate(BaseModel):
     camoufox_enabled: bool | None = None
     camoufox_timeout: int | None = None
     camoufox_url: str | None = None
+    flaresolverr_url: str | None = None
     suggest_searxng_url: str | None = None
     suggest_use_llm_expand: bool | None = None
     suggest_use_llm_rerank: bool | None = None
