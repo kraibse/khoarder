@@ -84,17 +84,23 @@ async def create_entry(body: EntryCreate, db: AsyncSession = Depends(get_db)):
     )
 
 
-async def _camoufox_params(db: AsyncSession) -> dict:
-    """Load camoufox extraction params from runtime config."""
+async def _extractor_params(db: AsyncSession) -> dict:
+    """Load browser extraction params from runtime config."""
     cf_enabled = (await config_svc.get_config_value(db, "camoufox_enabled", default="false")).lower() in ("true", "1")
     cf_timeout = int(await config_svc.get_config_value(db, "camoufox_timeout", default=str(settings.camoufox_timeout)))
     cf_url = await config_svc.get_config_value(db, "camoufox_url", default=settings.camoufox_url)
-    return {"camoufox_enabled": cf_enabled, "camoufox_timeout": cf_timeout, "camoufox_url": cf_url}
+    fs_url = await config_svc.get_config_value(db, "flaresolverr_url", default=settings.flaresolverr_url)
+    return {
+        "camoufox_enabled": cf_enabled,
+        "camoufox_timeout": cf_timeout,
+        "camoufox_url": cf_url,
+        "flaresolverr_url": fs_url,
+    }
 
 
 @router.post("/preview-import-url", response_model=URLPreviewOut)
 async def preview_import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db)):
-    extracted = await svc.extract_url_content(body.url, **await _camoufox_params(db))
+    extracted = await svc.extract_url_content(body.url, **await _extractor_params(db))
     suggestion = None
     if not body.topic_id:
         suggestion = await svc.suggest_topic(
@@ -114,7 +120,7 @@ async def preview_import_url(body: URLImportRequest, db: AsyncSession = Depends(
 
 @router.post("/import-url", response_model=ArticleDetailOut, status_code=201)
 async def import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db)):
-    extracted = await svc.extract_url_content(body.url, **await _camoufox_params(db))
+    extracted = await svc.extract_url_content(body.url, **await _extractor_params(db))
     entry_type = "Article" if len(extracted["body"]) > 200 else "Reference"
     return await svc.create_entry(
         db,
