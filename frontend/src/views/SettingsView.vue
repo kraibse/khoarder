@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import {
@@ -18,6 +18,8 @@ import {
 
 const router = useRouter()
 const config = ref<ConfigOut | null>(null)
+// Snapshot of last server-confirmed config; used to detect unsaved changes.
+const original = ref<ConfigOut | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref<string | null>(null)
@@ -62,10 +64,41 @@ const sections: Array<{ id: Section; label: string; icon: string }> = [
   { id: 'find-more', label: 'Find more', icon: 'sparkle' },
 ]
 
+// Which ConfigOut fields belong to which sidebar section.
+const sectionFields: Record<Section, Array<keyof ConfigOut>> = {
+  'lm-studio': ['llm_base_url', 'llm_model', 'llm_timeout', 'llm_context_entries', 'auto_tag_count'],
+  'extension-drafting': ['system_prompt'],
+  'camoufox': ['camoufox_enabled', 'camoufox_timeout', 'camoufox_url'],
+  'flaresolverr': ['flaresolverr_url'],
+  'browserless': ['browserless_enabled', 'browserless_url', 'browserless_timeout'],
+  'find-more': ['suggest_searxng_url', 'suggest_use_llm_expand', 'suggest_use_llm_rerank'],
+}
+
+const dirtySections = computed<Record<Section, boolean>>(() => {
+  const out = {} as Record<Section, boolean>
+  const cur = config.value
+  const orig = original.value
+  for (const id of Object.keys(sectionFields) as Section[]) {
+    if (!cur || !orig) { out[id] = false; continue }
+    let dirty = sectionFields[id].some((f) => cur[f] !== orig[f])
+    // Token never round-trips; treat any pending input or clear as dirty.
+    if (id === 'browserless') dirty = dirty || tokenInput.value.trim() !== '' || tokenClearRequested.value
+    out[id] = dirty
+  }
+  return out
+})
+
+const hasUnsaved = computed(() => Object.values(dirtySections.value).some(Boolean))
+
+function snapshot(c: ConfigOut): ConfigOut {
+  return JSON.parse(JSON.stringify(c))
+}
+
 onMounted(async () => {
   loading.value = true
   try {
     config.value = await getConfig()
+    original.value = snapshot(config.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load settings'
   } finally {
@@ -106,6 +139,7 @@ async function handleSave() {
     }
     const updated = await updateConfig(payload)
     config.value = updated
+    original.value = snapshot(updated)
     tokenInput.value = ''
     tokenClearRequested.value = false
     success.value = true
@@ -207,7 +241,13 @@ async function handleBlCheck() {
               @click="activeSection = s.id"
             >
               <AppIcon :name="s.icon" :size="14" class="shrink-0" />
-              {{ s.label }}
+              <span class="flex-1 text-left">{{ s.label }}</span>
+              <span
+                v-if="dirtySections[s.id]"
+                class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                aria-label="Unsaved changes"
+                title="Unsaved changes"
+              />
             </button>
           </nav>
         </aside>
@@ -694,12 +734,19 @@ async function handleBlCheck() {
           <!-- ── Save bar (always visible) ───────────────────────────────── -->
           <div class="mt-8 flex items-center gap-4 border-t border-line pt-5">
             <button
-              class="rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
-              :disabled="saving"
+              class="rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="saving || !hasUnsaved"
               @click="handleSave"
             >
               {{ saving ? 'Saving…' : 'Save changes' }}
             </button>
+            <span
+              v-if="hasUnsaved && !saving && !success"
+              class="flex items-center gap-1.5 text-sm text-amber-600"
+            >
+              <span class="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Unsaved changes
+            </span>
             <span v-if="success" class="text-sm text-green-600">Saved.</span>
             <span v-if="error" class="text-sm text-danger">{{ error }}</span>
           </div>
