@@ -85,22 +85,41 @@ async def create_entry(body: EntryCreate, db: AsyncSession = Depends(get_db)):
 
 
 async def _extractor_params(db: AsyncSession) -> dict:
-    """Load browser extraction params from runtime config."""
-    cf_enabled = (await config_svc.get_config_value(db, "camoufox_enabled", default="false")).lower() in ("true", "1")
+    """Load browser extraction params from runtime config.
+
+    Mirrors the persisted Config table so toggling Browserless/Camoufox in the
+    Settings page takes effect on the next import without a restart.
+    """
+    def _bool(raw: str) -> bool:
+        return raw.lower() in ("true", "1", "yes")
+
+    cf_enabled = _bool(await config_svc.get_config_value(db, "camoufox_enabled", default="false"))
     cf_timeout = int(await config_svc.get_config_value(db, "camoufox_timeout", default=str(settings.camoufox_timeout)))
     cf_url = await config_svc.get_config_value(db, "camoufox_url", default=settings.camoufox_url)
     fs_url = await config_svc.get_config_value(db, "flaresolverr_url", default=settings.flaresolverr_url)
+
+    bl_enabled = _bool(await config_svc.get_config_value(db, "browserless_enabled", default="false"))
+    bl_token = await config_svc.get_config_value(db, "browserless_token", default=settings.browserless_token)
+    bl_url = await config_svc.get_config_value(db, "browserless_url", default=settings.browserless_url)
+    bl_timeout = int(await config_svc.get_config_value(db, "browserless_timeout", default=str(settings.browserless_timeout)))
+    static_timeout = int(await config_svc.get_config_value(db, "static_fetch_timeout", default=str(settings.static_fetch_timeout)))
+
     return {
         "camoufox_enabled": cf_enabled,
         "camoufox_timeout": cf_timeout,
         "camoufox_url": cf_url,
         "flaresolverr_url": fs_url,
+        "browserless_enabled": bl_enabled,
+        "browserless_url": bl_url,
+        "browserless_token": bl_token,
+        "browserless_timeout": bl_timeout,
+        "static_fetch_timeout": static_timeout,
     }
 
 
 @router.post("/preview-import-url", response_model=URLPreviewOut)
 async def preview_import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db)):
-    extracted = await svc.extract_url_content(body.url, **await _extractor_params(db))
+    extracted = await svc.extract_url_content(body.url, **await _extractor_params(db), db=db)
     suggestion = None
     if not body.topic_id:
         suggestion = await svc.suggest_topic(
@@ -115,12 +134,13 @@ async def preview_import_url(body: URLImportRequest, db: AsyncSession = Depends(
         suggestion=TopicSuggestionOut(**suggestion) if suggestion else None,
         partial=extracted.get("partial", False),
         failure_reason=extracted.get("failure_reason"),
+        diagnostics=extracted.get("diagnostics"),
     )
 
 
 @router.post("/import-url", response_model=ArticleDetailOut, status_code=201)
 async def import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db)):
-    extracted = await svc.extract_url_content(body.url, **await _extractor_params(db))
+    extracted = await svc.extract_url_content(body.url, **await _extractor_params(db), db=db)
     entry_type = "Article" if len(extracted["body"]) > 200 else "Reference"
     return await svc.create_entry(
         db,

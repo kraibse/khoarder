@@ -124,6 +124,9 @@ class URLPreviewOut(BaseModel):
     #   "blocked"        – HTTP error or hard block from the origin
     #   "empty"          – fetched fine but no readable content was extracted
     failure_reason: str | None = None
+    # Optional pipeline diagnostics — strategy used, challenge type, per-stage timings.
+    # The frontend renders this in the import progress panel and ignores it if absent.
+    diagnostics: dict | None = None
 
 
 class EntryUpdate(BaseModel):

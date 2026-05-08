@@ -5,13 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.schemas.config import CamoufoxStatusOut, ConfigOut, ConfigUpdate, HealthOut
+from app.schemas.config import BrowserlessStatusOut, CamoufoxStatusOut, ConfigOut, ConfigUpdate, HealthOut
 from app.services import config as svc
 
 router = APIRouter(prefix="/config", tags=["config"])
 
 
-# (key, python_type) — drives both _load_config and _save_config
+# Standard keys that round-trip plainly between DB and ConfigOut/ConfigUpdate.
+# `browserless_token` is intentionally absent — handled separately as write-only.
 _CONFIG_KEYS: list[tuple[str, type]] = [
     ("llm_base_url", str),
     ("llm_model", str),
@@ -23,6 +24,10 @@ _CONFIG_KEYS: list[tuple[str, type]] = [
     ("camoufox_timeout", int),
     ("camoufox_url", str),
     ("flaresolverr_url", str),
+    ("browserless_enabled", bool),
+    ("browserless_url", str),
+    ("browserless_timeout", int),
+    ("static_fetch_timeout", int),
     ("suggest_searxng_url", str),
     ("suggest_use_llm_expand", bool),
     ("suggest_use_llm_rerank", bool),
@@ -52,6 +57,8 @@ async def _load_config(db: AsyncSession) -> ConfigOut:
         default = getattr(settings, key)
         raw = await svc.get_config_value(db, key, default=_to_str(default, typ))
         values[key] = _from_str(raw, typ)
+    token = await svc.get_config_value(db, "browserless_token", default=settings.browserless_token)
+    values["browserless_token_set"] = bool(token.strip())
     return ConfigOut(**values)  # type: ignore[arg-type]
 
 
@@ -61,6 +68,9 @@ async def _save_config(db: AsyncSession, body: ConfigUpdate) -> ConfigOut:
         if val is not None:
             await svc.set_config_value(db, key, _to_str(val, typ))
             setattr(settings, key, val)
+    if body.browserless_token is not None:
+        await svc.set_config_value(db, "browserless_token", body.browserless_token)
+        settings.browserless_token = body.browserless_token
     return await _load_config(db)
 
 
@@ -121,6 +131,27 @@ async def camoufox_status(db: AsyncSession = Depends(get_db)):
             browser_ready=False,
             message=f"Unreachable: {exc}",
         )
+
+
+@router.get("/browserless-status", response_model=BrowserlessStatusOut)
+async def browserless_status(db: AsyncSession = Depends(get_db)):
+    """Ping Browserless.io with the configured token. Returns reachable=true on a valid response."""
+    token = await svc.get_config_value(db, "browserless_token", default=settings.browserless_token)
+    base = await svc.get_config_value(db, "browserless_url", default=settings.browserless_url)
+    if not token.strip():
+        return BrowserlessStatusOut(configured=False, reachable=False, message="No API token configured.")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            # `/pressure` reports load + auth in one call without consuming render units.
+            resp = await client.get(base.rstrip("/") + "/pressure", params={"token": token})
+        if resp.status_code == 200:
+            return BrowserlessStatusOut(configured=True, reachable=True)
+        if resp.status_code in (401, 403):
+            return BrowserlessStatusOut(configured=True, reachable=False, message="Token rejected.")
+        return BrowserlessStatusOut(configured=True, reachable=False, message=f"HTTP {resp.status_code}")
+    except Exception as exc:
+        return BrowserlessStatusOut(configured=True, reachable=False, message=f"Unreachable: {exc}")
 
 
 @router.get("/flaresolverr-status", response_model=CamoufoxStatusOut)

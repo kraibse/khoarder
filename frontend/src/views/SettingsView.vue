@@ -8,9 +8,12 @@ import {
   checkHealth,
   checkCamoufoxStatus,
   checkFlaresolverrStatus,
+  checkBrowserlessStatus,
   type ConfigOut,
+  type ConfigUpdate,
   type HealthOut,
   type CamoufoxStatusOut,
+  type BrowserlessStatusOut,
 } from '@/api/config'
 
 const router = useRouter()
@@ -32,8 +35,22 @@ const checkingCf = ref(false)
 const fsStatus = ref<CamoufoxStatusOut | null>(null)
 const checkingFs = ref(false)
 
+// Browserless status + token-input state.
+// `tokenInput` stays blank by default; sending an empty string would clear the
+// stored token, so we only forward it when the user actually typed.
+const blStatus = ref<BrowserlessStatusOut | null>(null)
+const checkingBl = ref(false)
+const tokenInput = ref('')
+const tokenClearRequested = ref(false)
+
 // Sidebar navigation
-type Section = 'lm-studio' | 'extension-drafting' | 'camoufox' | 'flaresolverr' | 'find-more'
+type Section =
+  | 'lm-studio'
+  | 'extension-drafting'
+  | 'camoufox'
+  | 'flaresolverr'
+  | 'browserless'
+  | 'find-more'
 const activeSection = ref<Section>('lm-studio')
 
 const sections: Array<{ id: Section; label: string; icon: string }> = [
@@ -41,6 +58,7 @@ const sections: Array<{ id: Section; label: string; icon: string }> = [
   { id: 'extension-drafting', label: 'Extension Drafting', icon: 'edit' },
   { id: 'camoufox', label: 'Camoufox', icon: 'globe' },
   { id: 'flaresolverr', label: 'FlareSolverr', icon: 'shield' },
+  { id: 'browserless', label: 'Browserless', icon: 'globe' },
   { id: 'find-more', label: 'Find more', icon: 'sparkle' },
 ]
 
@@ -61,7 +79,7 @@ async function handleSave() {
   error.value = null
   success.value = false
   try {
-    await updateConfig({
+    const payload: ConfigUpdate = {
       llm_base_url: config.value.llm_base_url,
       llm_model: config.value.llm_model,
       llm_timeout: config.value.llm_timeout,
@@ -72,10 +90,24 @@ async function handleSave() {
       camoufox_timeout: config.value.camoufox_timeout,
       camoufox_url: config.value.camoufox_url,
       flaresolverr_url: config.value.flaresolverr_url,
+      browserless_enabled: config.value.browserless_enabled,
+      browserless_url: config.value.browserless_url,
+      browserless_timeout: config.value.browserless_timeout,
+      static_fetch_timeout: config.value.static_fetch_timeout,
       suggest_searxng_url: config.value.suggest_searxng_url,
       suggest_use_llm_expand: config.value.suggest_use_llm_expand,
       suggest_use_llm_rerank: config.value.suggest_use_llm_rerank,
-    })
+    }
+    // Browserless token: only send when user actually typed or asked to clear.
+    if (tokenClearRequested.value) {
+      payload.browserless_token = ''
+    } else if (tokenInput.value.trim()) {
+      payload.browserless_token = tokenInput.value
+    }
+    const updated = await updateConfig(payload)
+    config.value = updated
+    tokenInput.value = ''
+    tokenClearRequested.value = false
     success.value = true
     setTimeout(() => (success.value = false), 3000)
   } catch (e) {
@@ -117,6 +149,22 @@ async function handleFsCheck() {
     fsStatus.value = { installed: false, browser_ready: false, message: e instanceof Error ? e.message : 'Check failed' }
   } finally {
     checkingFs.value = false
+  }
+}
+
+async function handleBlCheck() {
+  checkingBl.value = true
+  blStatus.value = null
+  try {
+    blStatus.value = await checkBrowserlessStatus()
+  } catch (e) {
+    blStatus.value = {
+      configured: false,
+      reachable: false,
+      message: e instanceof Error ? e.message : 'Check failed',
+    }
+  } finally {
+    checkingBl.value = false
   }
 }
 </script>
@@ -441,6 +489,131 @@ async function handleFsCheck() {
               </div>
 
               <p v-if="fsStatus?.message" class="mt-2 text-[11px] text-ink-3 font-mono">{{ fsStatus.message }}</p>
+            </div>
+          </section>
+
+          <!-- Browserless ─────────────────────────────────────────────────── -->
+          <section v-else-if="activeSection === 'browserless'" class="space-y-5">
+            <div>
+              <h2 class="mb-0.5 text-[15px] font-semibold text-ink">Browserless.io</h2>
+              <p class="text-[12.5px] text-ink-3">
+                Optional remote-browser fallback. Used after Camoufox if local rendering
+                fails or the page needs a real browser fingerprint. The free tier accepts
+                a token; provide yours below — it is stored on the server and never sent
+                back to the UI in plaintext.
+              </p>
+            </div>
+
+            <!-- Enable toggle -->
+            <div class="flex items-start gap-3 rounded-lg border border-line bg-surface-2 px-4 py-3.5">
+              <div class="flex-1">
+                <p class="text-[13px] font-medium text-ink">Enable Browserless fallback</p>
+                <p class="mt-0.5 text-[12px] text-ink-3">
+                  Required for the strategy to be used. Disabled when no token is configured.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="config.browserless_enabled"
+                class="relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1"
+                :class="config.browserless_enabled ? 'bg-accent' : 'bg-[var(--border)]'"
+                @click="config.browserless_enabled = !config.browserless_enabled"
+              >
+                <span
+                  class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-150"
+                  :class="config.browserless_enabled ? 'translate-x-[18px]' : 'translate-x-0.5'"
+                />
+              </button>
+            </div>
+
+            <div
+              class="space-y-4 transition-opacity duration-150"
+              :class="config.browserless_enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'"
+            >
+              <div>
+                <label class="mb-1 block text-sm text-ink-2">API token</label>
+                <div class="flex items-center gap-2">
+                  <input
+                    v-model="tokenInput"
+                    type="password"
+                    autocomplete="off"
+                    :placeholder="config.browserless_token_set ? '•••••••• (saved — leave blank to keep)' : 'Paste your Browserless token'"
+                    class="flex-1 rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                    @input="tokenClearRequested = false"
+                  />
+                  <button
+                    v-if="config.browserless_token_set && !tokenClearRequested"
+                    type="button"
+                    class="rounded border border-line px-3 py-1.5 text-xs text-ink-2 hover:bg-surface-2"
+                    @click="tokenClearRequested = true; tokenInput = ''"
+                  >
+                    Clear
+                  </button>
+                  <span
+                    v-else-if="tokenClearRequested"
+                    class="text-xs text-danger"
+                  >Will clear on save</span>
+                </div>
+                <p class="mt-1 text-xs text-ink-3">
+                  Get a token at <span class="font-mono">browserless.io</span> · the free tier is fine for low-volume imports.
+                </p>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="mb-1 block text-sm text-ink-2">Endpoint</label>
+                  <input
+                    v-model="config.browserless_url"
+                    type="text"
+                    placeholder="https://production-sfo.browserless.io"
+                    class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  <p class="mt-1 text-xs text-ink-3">Override only if your account uses a different region.</p>
+                </div>
+                <div>
+                  <label class="mb-1 block text-sm text-ink-2">Render timeout (s)</label>
+                  <input
+                    v-model.number="config.browserless_timeout"
+                    type="number"
+                    min="5"
+                    max="120"
+                    class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Status check -->
+            <div class="border-t border-line pt-5">
+              <p class="mb-3 text-[12.5px] font-medium text-ink-2">Service status</p>
+
+              <div class="flex items-center gap-3">
+                <button
+                  class="rounded border border-line px-3 py-1.5 text-sm text-ink-2 hover:bg-surface-2 disabled:opacity-50"
+                  :disabled="checkingBl"
+                  @click="handleBlCheck"
+                >
+                  {{ checkingBl ? 'Checking…' : 'Check connection' }}
+                </button>
+
+                <template v-if="blStatus">
+                  <span v-if="blStatus.reachable" class="flex items-center gap-1.5 text-sm text-green-600">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                    Reachable
+                  </span>
+                  <span v-else-if="blStatus.configured" class="flex items-center gap-1.5 text-sm text-amber-600">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Configured, not reachable
+                  </span>
+                  <span v-else class="flex items-center gap-1.5 text-sm text-danger">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-danger" />
+                    No token configured
+                  </span>
+                </template>
+              </div>
+
+              <p v-if="blStatus?.message" class="mt-2 text-[11px] text-ink-3 font-mono">{{ blStatus.message }}</p>
             </div>
           </section>
 

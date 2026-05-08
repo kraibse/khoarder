@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     # FlareSolverr — Cloudflare challenge solver fallback (used after camoufox fails)
     flaresolverr_url: str = "http://flaresolverr:8191"     # URL of the FlareSolverr container
 
+    # Browserless.io — optional remote browser fallback (free tier supports a token)
+    browserless_enabled: bool = False
+    browserless_token: str = ""                                  # never sent back to UI as plaintext
+    browserless_url: str = "https://production-sfo.browserless.io"
+    browserless_timeout: int = 30                                # seconds for /content render
+
+    # Static-fetch budget. Anything slower escalates to a render strategy.
+    static_fetch_timeout: int = 8
+
     # Find-more discovery — pluggable providers + optional LLM steps
     suggest_searxng_url: str = ""                # optional self-hosted SearXNG base URL
     suggest_use_llm_expand: bool = False         # let LM Studio invent extra search queries

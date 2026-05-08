@@ -4,5 +4,15 @@ from app.models.entry import Entry
 from app.models.relation import Relation
 from app.models.attachment import Attachment
 from app.models.config import Config
+from app.models.origin_profile import OriginProfile
 
-__all__ = ["Topic", "Tag", "entry_tags", "Entry", "Relation", "Attachment", "Config"]
+__all__ = [
+    "Topic",
+    "Tag",
+    "entry_tags",
+    "Entry",
+    "Relation",
+    "Attachment",
+    "Config",
+    "OriginProfile",
+]
