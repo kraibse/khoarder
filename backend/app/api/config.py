@@ -135,23 +135,40 @@ async def camoufox_status(db: AsyncSession = Depends(get_db)):
 
 @router.get("/browserless-status", response_model=BrowserlessStatusOut)
 async def browserless_status(db: AsyncSession = Depends(get_db)):
-    """Ping Browserless.io with the configured token. Returns reachable=true on a valid response."""
+    """Ping Browserless with the configured token. Probes management endpoints
+    that don't consume render units. Walks a small list because the cloud and
+    self-hosted builds expose slightly different routes."""
     token = await svc.get_config_value(db, "browserless_token", default=settings.browserless_token)
-    base = await svc.get_config_value(db, "browserless_url", default=settings.browserless_url)
+    base = (await svc.get_config_value(db, "browserless_url", default=settings.browserless_url)).rstrip("/")
     if not token.strip():
         return BrowserlessStatusOut(configured=False, reachable=False, message="No API token configured.")
+
+    probes = ("/sessions", "/pressure", "/json/version", "/")
+    last_status: int | None = None
+    last_body: str = ""
+    last_path: str = ""
     try:
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
-            # `/pressure` reports load + auth in one call without consuming render units.
-            resp = await client.get(base.rstrip("/") + "/pressure", params={"token": token})
-        if resp.status_code == 200:
-            return BrowserlessStatusOut(configured=True, reachable=True)
-        if resp.status_code in (401, 403):
-            return BrowserlessStatusOut(configured=True, reachable=False, message="Token rejected.")
-        return BrowserlessStatusOut(configured=True, reachable=False, message=f"HTTP {resp.status_code}")
+            for path in probes:
+                try:
+                    resp = await client.get(base + path, params={"token": token})
+                except Exception as exc:
+                    return BrowserlessStatusOut(configured=True, reachable=False, message=f"Unreachable: {exc}")
+                if resp.status_code == 200:
+                    return BrowserlessStatusOut(configured=True, reachable=True)
+                if resp.status_code in (401, 403):
+                    return BrowserlessStatusOut(configured=True, reachable=False, message="Token rejected.")
+                last_status = resp.status_code
+                last_body = resp.text[:160].strip().replace("\n", " ")
+                last_path = path
     except Exception as exc:
         return BrowserlessStatusOut(configured=True, reachable=False, message=f"Unreachable: {exc}")
+
+    detail = f"HTTP {last_status} on {last_path}"
+    if last_body:
+        detail += f" — {last_body}"
+    return BrowserlessStatusOut(configured=True, reachable=False, message=detail)
 
 
 @router.get("/flaresolverr-status", response_model=CamoufoxStatusOut)
