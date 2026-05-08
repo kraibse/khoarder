@@ -40,6 +40,78 @@ def _coerce(html: str, base_url: str, body: str, extractor: str) -> ExtractionRe
     )
 
 
+# ── Math preprocessor — preserve LaTeX through extraction ───────────────────
+def _preprocess_math(html: str) -> str:
+    """Inline KaTeX/MathJax/MathML LaTeX source as `$...$` text.
+
+    Trafilatura strips `<math>` and the surrounding katex/MathJax wrappers by
+    default, so equations vanish. We pull the LaTeX source out of the
+    `<annotation encoding="application/x-tex">` node (KaTeX, MathJax v3, MathML
+    semantics) or `<script type="math/tex">` (MathJax v2) and replace the whole
+    math wrapper with a plain text node containing the raw LaTeX. Pages without
+    embedded LaTeX source (rendered-only MathML, image equations) are left
+    untouched.
+    """
+    try:
+        from lxml.html import fromstring, tostring
+    except ImportError:
+        return html
+    if "<annotation" not in html and "math/tex" not in html and "<math" not in html:
+        return html
+    try:
+        doc = fromstring(html)
+    except Exception:
+        return html
+
+    def _looks_like_math_wrapper(el) -> bool:
+        tag = el.tag if isinstance(el.tag, str) else ""
+        if tag in ("math", "semantics", "mrow"):
+            return True
+        if tag.startswith("mjx") or tag.startswith("mml"):
+            return True
+        cls = el.get("class") or ""
+        return "katex" in cls or "MathJax" in cls or "mjx-" in cls
+
+    def _replace_with_text(el, text: str) -> None:
+        parent = el.getparent()
+        if parent is None:
+            return
+        tail = el.tail or ""
+        prev = el.getprevious()
+        if prev is not None:
+            prev.tail = (prev.tail or "") + text + tail
+        else:
+            parent.text = (parent.text or "") + text + tail
+        parent.remove(el)
+
+    # KaTeX / MathJax v3 / MathML-with-semantics
+    for ann in doc.xpath('//annotation[@encoding="application/x-tex"]'):
+        latex = (ann.text_content() or "").strip()
+        if not latex:
+            continue
+        anchor = ann
+        for ancestor in ann.iterancestors():
+            if _looks_like_math_wrapper(ancestor):
+                anchor = ancestor
+            else:
+                break
+        cls = anchor.get("class") or ""
+        is_display = "katex-display" in cls or anchor.get("display") == "block"
+        wrapped = f"\n\n$$ {latex} $$\n\n" if is_display else f" ${latex}$ "
+        _replace_with_text(anchor, wrapped)
+
+    # MathJax v2
+    for script in doc.xpath('//script[starts-with(@type, "math/tex")]'):
+        latex = (script.text or "").strip()
+        if not latex:
+            continue
+        is_display = "display" in (script.get("type") or "")
+        wrapped = f"\n\n$$ {latex} $$\n\n" if is_display else f" ${latex}$ "
+        _replace_with_text(script, wrapped)
+
+    return tostring(doc, encoding="unicode")
+
+
 # ── Trafilatura — the workhorse ─────────────────────────────────────────────
 def extract_with_trafilatura(html: str, base_url: str) -> ExtractionResult | None:
     try:
@@ -52,7 +124,7 @@ def extract_with_trafilatura(html: str, base_url: str) -> ExtractionResult | Non
             url=base_url,
             include_comments=False,
             include_tables=True,
-            include_links=False,
+            include_links=True,
             include_images=False,
             favor_recall=True,
             with_metadata=False,
@@ -223,6 +295,7 @@ def extract_wikipedia(html: str, base_url: str) -> ExtractionResult:
 # ── Orchestrated extraction ─────────────────────────────────────────────────
 def extract_best(html: str, base_url: str, *, is_wikipedia: bool = False) -> ExtractionResult:
     """Run the cheapest extractor that yields a usable body. Always returns *something*."""
+    html = _preprocess_math(html)
     if is_wikipedia:
         return extract_wikipedia(html, base_url)
 
