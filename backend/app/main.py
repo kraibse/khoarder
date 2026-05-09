@@ -79,7 +79,8 @@ async def _startup():
                 else:
                     setattr(settings, key, val)
 
-        await seed_if_empty(db)
+        if settings.seed_demo_data:
+            await seed_if_empty(db)
 
 
 app = FastAPI(title="Knowledge Hoarder API", lifespan=lifespan)

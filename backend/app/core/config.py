@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     storage_path: str = "./storage"
     max_upload_bytes: int = 100 * 1024 * 1024  # 100 MB
     search_backend: str = "postgres"
+    seed_demo_data: bool = False  # opt-in: populate empty DB with demo topics/entries
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:80"]
 
     # LM Studio — OpenAI-compatible API running on a separate device
