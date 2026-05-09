@@ -51,3 +51,4 @@ npm-debug.log*
 # Claude / AI context
 .claude/
 CLAUDE.md
+docs/article-with-images-implementation-strategy.md
