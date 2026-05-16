@@ -358,7 +358,7 @@ onUnmounted(() => {
     <!-- Body row -->
     <div v-else-if="article" class="flex flex-1 overflow-hidden">
       <!-- Main scrollable column -->
-      <main ref="scrollEl" :class="['overflow-y-auto min-w-0', pdfViewUrl ? 'w-1/2' : 'flex-1']">
+      <main ref="scrollEl" :class="['overflow-y-auto min-w-0', pdfViewUrl ? 'flex-1 lg:w-1/2 lg:flex-none' : 'flex-1']">
         <!-- Hero image -->
         <div
           v-if="article.imgUrl"
@@ -494,8 +494,9 @@ onUnmounted(() => {
       <!-- Inline PDF viewer -->
       <div
         v-if="pdfViewUrl"
-        class="flex flex-col border-l border-line bg-surface-2"
-        style="width: 50%; min-width: 320px"
+        class="flex flex-col border-l border-line bg-surface-2
+               fixed inset-0 z-40 lg:static lg:inset-auto lg:z-auto
+               lg:w-1/2 lg:min-w-[320px]"
       >
         <div class="flex items-center gap-2 px-4 py-2 border-b border-line bg-surface">
           <AppIcon name="file" :size="13" class="text-ink-3" />
@@ -509,6 +510,7 @@ onUnmounted(() => {
           </button>
         </div>
         <iframe
+          :key="pdfViewUrl"
           :src="pdfViewUrl"
           class="flex-1 w-full"
           frameborder="0"
