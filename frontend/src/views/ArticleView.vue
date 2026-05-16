@@ -54,6 +54,20 @@ const showExtendModal = ref(false)
 const extendPrefill = ref('')
 const showAddModal = ref(false)
 const addModalPresetMode = ref<'url' | 'note' | null>(null)
+const summaryText = ref('')
+
+const pdfViewUrl = ref('')
+const pdfViewName = ref('')
+
+function openPdf(url: string, filename: string) {
+  pdfViewUrl.value = url
+  pdfViewName.value = filename
+}
+
+function closePdf() {
+  pdfViewUrl.value = ''
+  pdfViewName.value = ''
+}
 
 const topic = computed(() =>
   article.value ? topicsStore.topics.find((t) => t.id === article.value!.topicId) : null,
@@ -344,7 +358,7 @@ onUnmounted(() => {
     <!-- Body row -->
     <div v-else-if="article" class="flex flex-1 overflow-hidden">
       <!-- Main scrollable column -->
-      <main ref="scrollEl" class="flex-1 overflow-y-auto min-w-0">
+      <main ref="scrollEl" :class="['overflow-y-auto min-w-0', pdfViewUrl ? 'w-1/2' : 'flex-1']">
         <!-- Hero image -->
         <div
           v-if="article.imgUrl"
@@ -442,6 +456,27 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- AI Summary callout -->
+          <div
+            v-if="summaryText"
+            class="mb-6 rounded-[10px] border border-accent/20 bg-accent-bg/40 px-5 py-4"
+          >
+            <div class="flex items-center gap-2 mb-2">
+              <AppIcon name="file" :size="13" class="text-accent opacity-80" />
+              <span class="text-[11px] font-semibold tracking-[0.06em] uppercase text-accent">
+                AI Summary
+              </span>
+              <button
+                type="button"
+                class="ml-auto text-ink-3 hover:text-ink transition-colors"
+                @click="summaryText = ''"
+              >
+                <AppIcon name="x" :size="14" />
+              </button>
+            </div>
+            <p class="text-[13.5px] leading-[1.6] text-ink-2">{{ summaryText }}</p>
+          </div>
+
           <!-- Article body (Markdown rendered; [[Title]] shown as styled spans) -->
           <div class="article-prose" v-html="renderedBody" />
 
@@ -456,6 +491,30 @@ onUnmounted(() => {
         </div>
       </main>
 
+      <!-- Inline PDF viewer -->
+      <div
+        v-if="pdfViewUrl"
+        class="flex flex-col border-l border-line bg-surface-2"
+        style="width: 50%; min-width: 320px"
+      >
+        <div class="flex items-center gap-2 px-4 py-2 border-b border-line bg-surface">
+          <AppIcon name="file" :size="13" class="text-ink-3" />
+          <span class="text-xs text-ink-2 truncate flex-1">{{ pdfViewName }}</span>
+          <button
+            type="button"
+            class="text-ink-3 hover:text-ink transition-colors p-1 rounded hover:bg-surface-3"
+            @click="closePdf"
+          >
+            <AppIcon name="x" :size="16" />
+          </button>
+        </div>
+        <iframe
+          :src="pdfViewUrl"
+          class="flex-1 w-full"
+          frameborder="0"
+        />
+      </div>
+
       <!-- Right sidebar -->
       <ArticleSidebar
         :article="article"
@@ -467,6 +526,8 @@ onUnmounted(() => {
         @edit-entry="showEditModal = true"
         @related-changed="refreshRelated"
         @draft-extension="onDraftExtension"
+        @summary-generated="(text) => summaryText = text"
+        @view-pdf="openPdf"
         @deleted="router.push('/')"
       />
     </div>

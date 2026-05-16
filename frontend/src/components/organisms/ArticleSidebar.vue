@@ -6,7 +6,7 @@ import QAPanel from './QAPanel.vue'
 import AssistPanel from '@/components/molecules/AssistPanel.vue'
 import ColorPlaceholder from '@/components/molecules/ColorPlaceholder.vue'
 import type { ArticleDetail, Backlink, RelatedEntry, SourceFile } from '@/data/mock'
-import { uploadAttachment, attachmentDownloadUrl, getSuggestions, type RelatedEntryOut } from '@/api/entries'
+import { uploadAttachment, attachmentDownloadUrl, attachmentViewUrl, getSuggestions, type RelatedEntryOut } from '@/api/entries'
 import { addRelation, removeRelation } from '@/api/relations'
 import { deleteEntry } from '@/api/entries'
 
@@ -23,6 +23,8 @@ const emit = defineEmits<{
   'edit-entry': []
   'related-changed': []
   'draft-extension': [text: string]
+  'summary-generated': [text: string]
+  'view-pdf': [url: string, filename: string]
   deleted: []
 }>()
 
@@ -247,7 +249,16 @@ onMounted(loadSuggestions)
           {{ file.ext }}
         </div>
         <div class="flex-1 min-w-0">
+          <button
+            v-if="file.ext === 'pdf'"
+            type="button"
+            class="block text-xs text-ink truncate group-hover:text-accent transition-colors duration-[120ms] text-left w-full"
+            @click="emit('view-pdf', attachmentViewUrl(file.id), file.name)"
+          >
+            {{ file.name }}
+          </button>
           <a
+            v-else
             :href="attachmentDownloadUrl(file.id)"
             download
             class="block text-xs text-ink truncate group-hover:text-accent transition-colors duration-[120ms]"
@@ -283,6 +294,7 @@ onMounted(loadSuggestions)
         @tags-applied="emit('related-changed')"
         @related-linked="emit('related-changed')"
         @draft-extension="(text) => emit('draft-extension', text)"
+        @summary-generated="(text) => emit('summary-generated', text)"
       />
     </div>
 

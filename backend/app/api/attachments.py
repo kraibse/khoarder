@@ -34,6 +34,26 @@ async def download_attachment(attachment_id: str, db: AsyncSession = Depends(get
     )
 
 
+@router.get("/{attachment_id}/view")
+async def view_attachment(attachment_id: str, db: AsyncSession = Depends(get_db)):
+    """Serve attachment inline (no forced download) for browser-native rendering."""
+    result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
+    att = result.scalar_one_or_none()
+    if att is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    abs_p = file_svc.abs_path(att.storage_path)
+    if not abs_p.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    media_type = mimetypes.guess_type(att.filename)[0] or "application/octet-stream"
+    return FileResponse(
+        path=str(abs_p),
+        media_type=media_type,
+        content_disposition_type="inline",
+    )
+
+
 @router.delete("/{attachment_id}", status_code=204)
 async def delete_attachment(attachment_id: str, db: AsyncSession = Depends(get_db)):
     storage_path = await remove_attachment(db, attachment_id)

@@ -21,6 +21,7 @@ const emit = defineEmits<{
   'tags-applied': []
   'related-linked': []
   'draft-extension': [text: string]
+  'summary-generated': [text: string]
 }>()
 
 // ── Summarize ─────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ async function runSummarize() {
   try {
     const res = await assistSummarize(props.entryId)
     summary.value = res.summary
+    emit('summary-generated', res.summary)
   } catch (e) {
     summaryError.value = e instanceof Error ? e.message : 'Error'
   } finally {

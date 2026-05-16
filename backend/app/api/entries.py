@@ -142,7 +142,14 @@ async def preview_import_url(body: URLImportRequest, db: AsyncSession = Depends(
 async def import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db)):
     extracted = await svc.extract_url_content(body.url, **await _extractor_params(db), db=db)
     entry_type = "Article" if len(extracted["body"]) > 200 else "Reference"
-    return await svc.create_entry(
+
+    from app.services.imports.fast_paths import arxiv_id, arxiv_pdf_url
+
+    is_arxiv = arxiv_id(body.url) is not None
+    if is_arxiv:
+        entry_type = "Paper"
+
+    entry = await svc.create_entry(
         db,
         topic_id=body.topic_id,
         entry_type=entry_type,
@@ -156,6 +163,34 @@ async def import_url(body: URLImportRequest, db: AsyncSession = Depends(get_db))
         tag_names=[],
         topic_suggestion=body.topic_suggestion.model_dump() if body.topic_suggestion else None,
     )
+
+    if is_arxiv:
+        paper_id = arxiv_id(body.url)
+        if paper_id:
+            try:
+                pdf_url = arxiv_pdf_url(paper_id)
+                filename = f"{paper_id}.pdf"
+                async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+                    resp = await client.get(pdf_url)
+                    if resp.status_code == 200:
+                        import uuid as _uuid
+                        attachment_id = str(_uuid.uuid4())
+                        rel_path = file_svc.storage_path_for(entry.id, attachment_id, filename)
+                        abs_p = file_svc.abs_path(rel_path)
+                        abs_p.parent.mkdir(parents=True, exist_ok=True)
+                        abs_p.write_bytes(resp.content)
+                        await svc.add_attachment(
+                            db,
+                            entry_id=entry.id,
+                            filename=filename,
+                            ext="pdf",
+                            size_bytes=len(resp.content),
+                            storage_path=rel_path,
+                        )
+            except Exception:
+                pass
+
+    return entry
 
 
 @router.post("/{entry_id}/attachments", response_model=AttachmentOut, status_code=201)

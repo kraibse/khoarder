@@ -3,10 +3,12 @@
 Wikipedia returns clean HTML over plain HTTP and is parseable without JS.
 YouTube exposes oEmbed metadata + a transcript endpoint, so a single API
 call beats running a browser.
+arXiv abstracts are plain HTML; the PDF is always at a predictable URL.
 """
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,22 @@ logger = logging.getLogger(__name__)
 
 def is_wikipedia(url: str) -> bool:
     return "wikipedia.org" in url or "wikimedia.org" in url
+
+
+def arxiv_id(url: str) -> str | None:
+    """Extract arXiv paper ID from abs or pdf URLs."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if "arxiv.org" not in host:
+        return None
+    m = re.search(r"(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)", parsed.path)
+    if m:
+        return m.group(1)
+    return None
+
+
+def arxiv_pdf_url(paper_id: str) -> str:
+    return f"https://arxiv.org/pdf/{paper_id}.pdf"
 
 
 def youtube_video_id(url: str) -> str | None:
