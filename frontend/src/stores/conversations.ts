@@ -84,6 +84,16 @@ export const useConversationsStore = defineStore('conversations', () => {
         conversations.value[idx].message_count += 2
         conversations.value[idx].updated_at = new Date().toISOString()
       }
+    } catch (e: any) {
+      const errorMsg: MessageOut = {
+        id: `err-${Date.now()}`,
+        conversation_id: conversationId,
+        role: 'assistant',
+        content: `The LLM endpoint is not reachable. ${e.message || 'Please check your LM Studio configuration in Settings.'}`,
+        created_at: new Date().toISOString(),
+        entry_id: null,
+      }
+      messages.value.push(errorMsg)
     } finally {
       sending.value = false
     }

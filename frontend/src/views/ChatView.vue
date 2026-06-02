@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
@@ -9,6 +9,8 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useMemoriesStore } from '@/stores/memories'
 import { createEntryFromChat } from '@/api/conversations'
 import type { ConversationListOut } from '@/api/conversations'
+import { checkHealth } from '@/api/config'
+import type { HealthOut } from '@/api/config'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,10 +29,27 @@ const editingTitle = ref<string | null>(null)
 const editTitleValue = ref('')
 const editingMemoryId = ref<string | null>(null)
 const editMemoryValue = ref('')
+const llmReachable = ref<boolean | null>(null)
+const llmHealthModel = ref<string | null>(null)
+
+async function pollHealth() {
+  try {
+    const h = await checkHealth()
+    llmReachable.value = h.reachable
+    llmHealthModel.value = h.model
+  } catch {
+    llmReachable.value = false
+    llmHealthModel.value = null
+  }
+}
+
+let healthInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   convStore.loadConversations(topicId.value)
   memStore.loadMemories(topicId.value)
+  pollHealth()
+  healthInterval = setInterval(pollHealth, 30000)
 })
 
 watch(() => route.params.topicId, () => {
@@ -38,6 +57,10 @@ watch(() => route.params.topicId, () => {
   convStore.activeConversation = null
   convStore.messages = []
   memStore.loadMemories(topicId.value)
+})
+
+onUnmounted(() => {
+  if (healthInterval) clearInterval(healthInterval)
 })
 
 watch(() => convStore.messages.length, () => {
@@ -142,7 +165,7 @@ async function handleDeleteMemory(memId: string) {
     <div class="flex-1 flex min-w-0">
       <!-- Conversation list sidebar -->
       <div class="w-64 border-r border-line flex flex-col bg-surface flex-shrink-0">
-        <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+        <div class="px-4 border-b border-line flex items-center justify-between h-[58px] flex-shrink-0">
           <div>
             <div class="text-[10px] font-semibold tracking-[0.09em] uppercase text-ink-3">
               {{ activeTopicName }}
@@ -216,33 +239,46 @@ async function handleDeleteMemory(memId: string) {
       <!-- Main chat area -->
       <div class="flex-1 flex flex-col min-w-0 bg-surface">
         <!-- Header -->
-        <div class="px-6 py-3 border-b border-line flex items-center justify-between flex-shrink-0">
+        <div class="px-6 border-b border-line flex items-center justify-between h-[58px] flex-shrink-0">
           <div class="text-[14px] font-medium text-ink">
             {{ convStore.activeConversation?.title ?? 'New Conversation' }}
           </div>
-          <div v-if="convStore.sending" class="text-[11px] text-ink-3 flex items-center gap-1">
-            <span class="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-            Thinking...
+          <div class="flex items-center gap-3">
+            <div
+              v-if="llmReachable === false"
+              class="text-[11px] text-danger flex items-center gap-1"
+              title="LLM endpoint is not reachable"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-danger" />
+              Offline
+            </div>
+            <div v-if="convStore.sending" class="text-[11px] text-ink-3 flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+              Thinking...
+            </div>
           </div>
         </div>
 
         <!-- Messages -->
-        <div ref="scrollRef" class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          <template v-if="convStore.activeConversation">
-            <div
-              v-for="msg in convStore.messages"
-              :key="msg.id"
-              class="flex"
-              :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
-            >
+        <div ref="scrollRef" class="flex-1 overflow-y-auto px-6 py-4">
+          <div class="max-w-3xl mx-auto space-y-4">
+            <template v-if="convStore.activeConversation">
+              <div
+                v-for="msg in convStore.messages"
+                :key="msg.id"
+                class="flex"
+                :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
+              >
               <div
                 class="max-w-[80%] px-4 py-2.5 rounded-2xl text-[13px] leading-relaxed"
                 :class="msg.role === 'user'
                   ? 'bg-accent text-white rounded-br-md'
-                  : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
+                  : msg.id.startsWith('err-')
+                    ? 'bg-[var(--danger-bg)] text-danger rounded-bl-md border border-danger'
+                    : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
               >
                 <div class="whitespace-pre-wrap">{{ msg.content }}</div>
-                <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5 flex-wrap">
+                <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-') && !msg.id.startsWith('err-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5 flex-wrap">
                   <button
                     type="button"
                     class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
@@ -267,10 +303,11 @@ async function handleDeleteMemory(memId: string) {
                 </div>
               </div>
             </div>
-          </template>
+            </template>
 
-          <div v-else class="flex items-center justify-center h-full text-ink-3 text-[13px]">
-            Select a conversation or start a new one.
+            <div v-else class="flex items-center justify-center h-full text-ink-3 text-[13px]">
+              Select a conversation or start a new one.
+            </div>
           </div>
         </div>
 
@@ -299,7 +336,7 @@ async function handleDeleteMemory(memId: string) {
 
       <!-- Memory sidebar -->
       <div class="w-56 border-l border-line flex flex-col bg-surface flex-shrink-0">
-        <div class="px-3 py-3 border-b border-line flex items-center justify-between">
+        <div class="px-3 border-b border-line flex items-center justify-between h-[58px] flex-shrink-0">
           <div class="text-[11px] font-semibold tracking-[0.09em] uppercase text-ink-3">Memories</div>
         </div>
         <div class="flex-1 overflow-y-auto py-2 px-3 space-y-2">
