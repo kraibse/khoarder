@@ -74,7 +74,8 @@ export function sendMessageStream(
   content: string,
   callbacks: StreamCallbacks,
 ): () => void {
-  const url = `${import.meta.env.VITE_API_BASE_URL || ''}/conversations/${conversationId}/messages/stream`
+  const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'
+  const url = `${base}/conversations/${conversationId}/messages/stream`
   const abortController = new AbortController()
 
   const run = async () => {
