@@ -52,3 +52,9 @@ npm-debug.log*
 .claude/
 CLAUDE.md
 docs/article-with-images-implementation-strategy.md
+
+# Test artifacts
+.pytest_cache/
+__pycache__/
+.coverage
+htmlcov/
