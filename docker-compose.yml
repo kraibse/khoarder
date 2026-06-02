@@ -28,6 +28,9 @@ services:
       STORAGE_PATH: /storage
     volumes:
       - storage:/storage
+      # Alembic migrations are mounted so the container can run upgrades
+      # using the current migration files from the repo.
+      - ./backend/alembic:/app/alembic:ro
     depends_on:
       db:
         condition: service_healthy

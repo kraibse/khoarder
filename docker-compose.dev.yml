@@ -42,6 +42,8 @@ services:
     volumes:
       # Mount app package only; uvicorn --reload watches for .py changes.
       - ./backend/app:/app/app
+      # Mount alembic so migration files stay in sync during development.
+      - ./backend/alembic:/app/alembic
       # Persist uploaded files on the host so they survive container restarts.
       - ./storage:/storage
     environment:
