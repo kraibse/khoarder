@@ -46,7 +46,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   async function renameConversation(id: string, title: string) {
     const conv = await updateConversation(id, title)
     if (activeConversation.value?.id === id) {
-      activeConversation.value = conv
+      activeConversation.value = { ...conv, messages: activeConversation.value.messages }
     }
     const idx = conversations.value.findIndex((c) => c.id === id)
     if (idx !== -1) {
