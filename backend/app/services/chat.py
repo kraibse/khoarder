@@ -46,7 +46,7 @@ async def _retrieve(db: AsyncSession, topic_id: str | None, query: str, limit: i
 
     hits = await search_svc.search(db, query, topic_id=topic_id, limit=limit)
     if hits:
-        return [entry for entry, _ in hits]
+        return [hit.entry for hit in hits]
 
     stmt = (
         select(Entry)

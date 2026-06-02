@@ -63,7 +63,7 @@ async def _retrieve(db: AsyncSession, topic_id: str, query: str, limit: int) -> 
 
     hits = await search_svc.search(db, query, topic_id=topic_id, limit=limit)
     if hits:
-        return [entry for entry, _ in hits]
+        return [hit.entry for hit in hits]
 
     # Fallback: most recent entries
     result = await db.execute(
