@@ -133,7 +133,10 @@ async function handleLoadModel() {
   loadingModel.value = true
   loadModelError.value = null
   try {
-    await loadModel(config.value.llm_model)
+    // Use the model's path if available (LM Studio load API prefers path)
+    const selected = models.value.find(m => m.id === config.value!.llm_model)
+    const modelId = selected?.path || config.value.llm_model
+    await loadModel(modelId)
     await fetchModels()
     await handleHealthCheck()
   } catch (e) {

@@ -54,6 +54,7 @@ class HealthOut(BaseModel):
 
 class ModelInfo(BaseModel):
     id: str
+    path: str = ""
     loaded: bool = False
 
 

@@ -94,9 +94,34 @@ async def health_check(db: AsyncSession = Depends(get_db)):
             configured_model=configured_model,
             error="LLM Studio is not configured. Set the base URL in Settings.",
         )
+    mgmt_base = base_url.rstrip("/")
+    if mgmt_base.endswith("/v1"):
+        mgmt_base = mgmt_base[:-3]
     try:
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
+            # Try LM Studio management API for accurate loaded-model detection
+            try:
+                mgmt_resp = await client.get(mgmt_base + "/api/v0/models")
+                if mgmt_resp.status_code == 200:
+                    data = mgmt_resp.json()
+                    models = data.get("data", [])
+                    loaded = [m for m in models if m.get("loaded")]
+                    if loaded:
+                        return HealthOut(
+                            reachable=True,
+                            model=loaded[0].get("id", loaded[0].get("path", configured_model)),
+                            configured_model=configured_model,
+                        )
+                    # No model loaded — still reachable
+                    return HealthOut(
+                        reachable=True,
+                        model=None,
+                        configured_model=configured_model,
+                    )
+            except Exception:
+                pass
+            # Fallback to OpenAI-compatible endpoint
             resp = await client.get(base_url.rstrip("/") + "/models")
             if resp.status_code == 200:
                 data = resp.json()
@@ -135,7 +160,11 @@ async def list_models(db: AsyncSession = Depends(get_db)):
                     models = data.get("data", [])
                     return ModelsOut(
                         models=[
-                            ModelInfo(id=m.get("id", m.get("path", "unknown")), loaded=m.get("loaded", False))
+                            ModelInfo(
+                                id=m.get("id", m.get("path", "unknown")),
+                                path=m.get("path", ""),
+                                loaded=m.get("loaded", False),
+                            )
                             for m in models
                         ]
                     )
@@ -165,13 +194,19 @@ async def load_model(body: LoadModelRequest, db: AsyncSession = Depends(get_db))
     try:
         import httpx
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                mgmt_base + "/api/v0/models/load",
-                json={"model": body.model},
+            # LM Studio management API accepts {"path": "..."} or {"model": "..."}
+            # Try path first (more common in newer versions)
+            for payload in ({"path": body.model}, {"model": body.model}):
+                resp = await client.post(
+                    mgmt_base + "/api/v0/models/load",
+                    json=payload,
+                )
+                if resp.status_code in (200, 202):
+                    return {"status": "loading", "model": body.model}
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=f"LM Studio rejected load request: {resp.text[:200]}",
             )
-            if resp.status_code in (200, 202):
-                return {"status": "loading", "model": body.model}
-            raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
     except HTTPException:
         raise
     except Exception as exc:

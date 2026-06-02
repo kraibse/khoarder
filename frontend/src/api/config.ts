@@ -53,6 +53,7 @@ export interface HealthOut {
 
 export interface ModelInfo {
   id: string
+  path: string
   loaded: boolean
 }
 
