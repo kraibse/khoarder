@@ -207,6 +207,7 @@ _IMG_COLORS = [
 
 async def _classify_entry(db: AsyncSession, title: str, excerpt: str, body: str) -> tuple[str | None, str | None]:
     """Use LM Studio to classify an entry into a topic. Returns (topic_id, topic_name) or (None, None)."""
+    import json
     import logging
     from app.core.config import settings
     from app.services import config as config_svc
@@ -230,43 +231,127 @@ async def _classify_entry(db: AsyncSession, title: str, excerpt: str, body: str)
         # Get existing topics
         topics_result = await db.execute(select(Topic).order_by(Topic.name))
         topics = topics_result.scalars().all()
-        topic_list = ", ".join([f"{t.name}" for t in topics]) if topics else "none"
+
+        # Skip auto-categorization if there is only one topic — trivial and noisy
+        if len(topics) <= 1:
+            return None, None
+
+        topic_names = [t.name for t in topics]
+        topic_list = "\n".join(f"- {name}" for name in topic_names)
 
         prompt = (
-            f"Classify the following knowledge entry into one of these existing topics: {topic_list}\n\n"
-            f"If none fit, suggest a new short topic name (2-3 words).\n\n"
-            f"Title: {title}\n"
+            f"Classify the following knowledge entry into one of these existing topics.\n\n"
+            f"Topics:\n{topic_list}\n\n"
+            f"Entry:\nTitle: {title}\n"
             f"Excerpt: {excerpt}\n"
             f"Body: {body[:500]}...\n\n"
-            f"Respond with ONLY the topic name, nothing else."
+            f"Respond ONLY with a JSON object containing per-topic confidence scores "
+            f"(0.0 to 1.0). Example format:\n"
+            f'{{"Topic A": 0.85, "Topic B": 0.12}}\n\n'
+            f"Do not include any other text."
         )
 
         response = await client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
-            max_tokens=50,
+            max_tokens=200,
         )
         raw_content = response.choices[0].message.content
-        suggested = raw_content.strip() if raw_content else ""
-
-        if not suggested:
+        if not raw_content:
             logger.warning("LM Studio returned empty topic suggestion")
             return None, None
 
-        # Find matching topic (case-insensitive)
-        suggested_lower = suggested.lower()
+        # Parse JSON scores
+        try:
+            # Strip markdown fences if present
+            cleaned = raw_content.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
+            if cleaned.endswith("```"):
+                cleaned = cleaned.rsplit("\n", 1)[0] if "\n" in cleaned else cleaned
+            cleaned = cleaned.strip()
+            scores: dict[str, float] = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            logger.warning("Auto-categorization: failed to parse JSON scores: %s — raw: %s", exc, raw_content[:200])
+            return None, None
+
+        if not scores:
+            return None, None
+
+        # Threshold: if nothing reaches this, create a new topic
+        THRESHOLD = 0.6
+
+        # Sort by confidence descending
+        sorted_scores = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        best_name, best_score = sorted_scores[0]
+
+        if best_score < THRESHOLD:
+            # No topic reaches threshold — suggest a new short topic name
+            suggest_prompt = (
+                f"Based on this entry, suggest a short topic name (2-4 words). "
+                f"Existing topics didn't fit well enough.\n\n"
+                f"Title: {title}\n"
+                f"Excerpt: {excerpt}\n\n"
+                f"Respond with ONLY the topic name, nothing else."
+            )
+            suggest_response = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": suggest_prompt}],
+                temperature=0.3,
+                max_tokens=30,
+            )
+            suggested = (suggest_response.choices[0].message.content or "").strip()
+            if not suggested:
+                return None, None
+
+            # Create new topic
+            slug = re.sub(r'[^\w\s-]', '', suggested.lower()).strip()
+            slug = re.sub(r'[-\s]+', '-', slug)[:64]
+            if not slug:
+                slug = "topic"
+            base_slug = slug
+            counter = 1
+            while True:
+                existing = await db.execute(select(Topic).where(Topic.slug == slug))
+                if existing.scalar_one_or_none() is None:
+                    break
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+
+            import random
+            colors = [
+                "oklch(72% 0.08 200)", "oklch(65% 0.10 160)", "oklch(68% 0.07 30)",
+                "oklch(60% 0.09 280)", "oklch(74% 0.06 80)", "oklch(62% 0.11 320)",
+                "oklch(70% 0.08 120)", "oklch(67% 0.09 240)", "oklch(75% 0.05 50)",
+            ]
+            new_topic = Topic(
+                id=str(uuid.uuid4()),
+                slug=slug,
+                name=suggested,
+                color=random.choice(colors),
+                description="",
+            )
+            db.add(new_topic)
+            await db.flush()
+            return new_topic.id, new_topic.name
+
+        # Find matching topic by name (case-insensitive)
+        best_lower = best_name.lower()
         for t in topics:
-            if t.name.lower() == suggested_lower:
+            if t.name.lower() == best_lower:
                 return t.id, t.name
 
-        # Create new topic
-        import re
-        slug = re.sub(r'[^\w\s-]', '', suggested_lower).strip()
+        # Fuzzy fallback: if the LLM used a slight variant, accept it if close enough
+        for t in topics:
+            if best_lower in t.name.lower() or t.name.lower() in best_lower:
+                return t.id, t.name
+
+        # Still no match — create new topic with the best-scored name
+        slug = re.sub(r'[^\w\s-]', '', best_lower).strip()
         slug = re.sub(r'[-\s]+', '-', slug)[:64]
         if not slug:
             slug = "topic"
-        # Ensure unique slug
         base_slug = slug
         counter = 1
         while True:
@@ -285,7 +370,7 @@ async def _classify_entry(db: AsyncSession, title: str, excerpt: str, body: str)
         new_topic = Topic(
             id=str(uuid.uuid4()),
             slug=slug,
-            name=suggested,
+            name=best_name,
             color=random.choice(colors),
             description="",
         )
