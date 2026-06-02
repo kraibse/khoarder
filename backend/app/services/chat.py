@@ -131,12 +131,17 @@ async def send_message(db: AsyncSession, conversation_id: str, content: str) -> 
     if conv is None:
         raise ValueError("Conversation not found")
 
+    context_entries = int(await config_svc.get_config_value(db, "llm_context_entries", default=str(settings.llm_context_entries)))
+
     user_msg = Message(conversation_id=conversation_id, role="user", content=content)
     db.add(user_msg)
     await db.commit()
     await db.refresh(user_msg)
 
-    context_entries = int(await config_svc.get_config_value(db, "llm_context_entries", default=str(settings.llm_context_entries)))
+    # Reload conversation after commit to avoid expired-object lazy-load in async SQLAlchemy
+    conv = await get_conversation(db, conversation_id)
+    if conv is None:
+        raise ValueError("Conversation not found after commit")
 
     prior = [m for m in conv.messages if m.role in ("user", "assistant")]
     prior.sort(key=lambda m: m.created_at)
