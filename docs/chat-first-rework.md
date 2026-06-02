@@ -28,27 +28,27 @@
 ## What's Missing (The Work)
 
 ### 1. Persistent Conversations
-**Current:** `QAPanel` messages are `ref<QAMessage[]>` — in-memory, lost on unmount.  
+**Current:** `QAPanel` messages are `ref<QAMessage[]>` — in-memory, lost on unmount.
 **Needed:** Backend `Conversation` and `Message` tables with full CRUD lifecycle.
 
 ### 2. Multi-Turn Context
-**Current:** `ask_question()` is single-shot — no conversation history sent to LM Studio.  
+**Current:** `ask_question()` is single-shot — no conversation history sent to LM Studio.
 **Needed:** `send_message()` loads full conversation history, prepends it to the LLM context window.
 
 ### 3. Chat-to-Entry Pipeline
-**Current:** `assist_extend` returns text for manual append. No auto-save workflow.  
+**Current:** `assist_extend` returns text for manual append. No auto-save workflow.
 **Needed:** After a chat turn, offer "Save as note/article" → creates `Entry` with `conversation_id` FK. Optionally auto-extract facts on save.
 
 ### 4. LLM Memory / Long-Term Context
-**Current:** System prompt is the only persistent context. No fact store.  
+**Current:** System prompt is the only persistent context. No fact store.
 **Needed:** A `Memory` model (per-topic or global) that the LLM can read/write during conversations.
 
 ### 5. Overview Article Generation
-**Current:** No automated "build me an overview from these entries" feature.  
+**Current:** No automated "build me an overview from these entries" feature.
 **Needed:** A user-triggered "Generate overview" action that feeds selected/top entries to LM Studio with a synthesis prompt, creates a new `Entry`, and auto-links related entries.
 
 ### 6. Ground Truth Hierarchy
-**Current:** Q&A prompt doesn't explicitly rank retrieved context above model assumptions.  
+**Current:** Q&A prompt doesn't explicitly rank retrieved context above model assumptions.
 **Needed:** Update `qa.py` prompts with memory-os Layer 7 pattern: "You MUST rely on the provided context. Do not hallucinate beyond it."
 
 ---
