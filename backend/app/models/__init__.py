@@ -5,6 +5,8 @@ from app.models.relation import Relation
 from app.models.attachment import Attachment
 from app.models.config import Config
 from app.models.origin_profile import OriginProfile
+from app.models.conversation import Conversation
+from app.models.message import Message
 
 __all__ = [
     "Topic",
@@ -15,4 +17,6 @@ __all__ = [
     "Attachment",
     "Config",
     "OriginProfile",
+    "Conversation",
+    "Message",
 ]

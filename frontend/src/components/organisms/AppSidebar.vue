@@ -39,6 +39,7 @@ const navItems = [
   { id: 'inbox', label: 'Inbox', icon: 'inbox' },
   { id: 'all', label: 'All Entries', icon: 'book' },
   { id: 'starred', label: 'Starred', icon: 'star' },
+  { id: 'chat', label: 'Chat', icon: 'message' },
 ]
 
 async function fetchTags(topicId: string) {
@@ -63,10 +64,18 @@ function isNavId(id: string) {
 function selectTopic(id: string) {
   uiStore.activeSmartView = null
   topicsStore.setActiveTopic(id)
+  if (router.currentRoute.value.path.startsWith('/chat')) {
+    router.push(`/chat/${id}`)
+  }
   if (window.innerWidth < 768) uiStore.sidebarOpen = false
 }
 
 function selectNavItem(id: string) {
+  if (id === 'chat') {
+    router.push('/chat')
+    if (window.innerWidth < 768) uiStore.sidebarOpen = false
+    return
+  }
   uiStore.activeSmartView = null
   topicsStore.setActiveTopic(id)
   if (window.innerWidth < 768) uiStore.sidebarOpen = false
@@ -133,7 +142,7 @@ function handleSettings() {
           v-for="item in navItems"
           :key="item.id"
           class="sidebar-item"
-          :class="{ active: topicsStore.activeTopicId === item.id }"
+          :class="{ active: topicsStore.activeTopicId === item.id || (item.id === 'chat' && router.currentRoute.value.path.startsWith('/chat')) }"
           @click="() => selectNavItem(item.id)"
         >
           <AppIcon :name="item.icon" :size="14" class="opacity-70" />

@@ -13,6 +13,9 @@ class Entry(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     topic_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True)
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True
+    )
     type: Mapped[str] = mapped_column(String(32), nullable=False)  # Article|Note|Paper|Excerpt|Reference
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -47,4 +50,7 @@ class Entry(Base):
     )
     relations_to: Mapped[list["Relation"]] = relationship(  # type: ignore[name-defined]
         "Relation", foreign_keys="Relation.to_entry_id", back_populates="to_entry", lazy="select"
+    )
+    messages: Mapped[list["Message"]] = relationship(  # type: ignore[name-defined]
+        "Message", back_populates="entry", lazy="select"
     )
