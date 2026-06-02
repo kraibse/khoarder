@@ -65,7 +65,7 @@ function selectTopic(id: string) {
   uiStore.activeSmartView = null
   topicsStore.setActiveTopic(id)
   if (router.currentRoute.value.path.startsWith('/chat')) {
-    router.push(`/chat/${id}`)
+    router.push('/')
   }
   if (window.innerWidth < 768) uiStore.sidebarOpen = false
 }
@@ -78,12 +78,18 @@ function selectNavItem(id: string) {
   }
   uiStore.activeSmartView = null
   topicsStore.setActiveTopic(id)
+  if (router.currentRoute.value.path !== '/') {
+    router.push('/')
+  }
   if (window.innerWidth < 768) uiStore.sidebarOpen = false
 }
 
 function selectSmartView(id: string) {
   uiStore.activeSmartView = id
   topicsStore.activeTopicId = ''
+  if (router.currentRoute.value.path !== '/') {
+    router.push('/')
+  }
   if (window.innerWidth < 768) uiStore.sidebarOpen = false
 }
 
