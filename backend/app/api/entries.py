@@ -258,3 +258,12 @@ async def preview_topic(body: TopicPreviewRequest, db: AsyncSession = Depends(ge
 @router.get("/{entry_id}/suggestions", response_model=list[RelatedEntryOut])
 async def get_suggestions(entry_id: str, db: AsyncSession = Depends(get_db)):
     return await svc.suggest_related(db, entry_id)
+
+
+@router.post("/{entry_id}/suggest-related", response_model=list[dict])
+async def suggest_related_entries(entry_id: str, db: AsyncSession = Depends(get_db)):
+    from app.services import overview as overview_svc
+    try:
+        return await overview_svc.suggest_related(db, entry_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))

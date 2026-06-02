@@ -9,6 +9,7 @@ import type { ArticleDetail, Backlink, RelatedEntry, SourceFile } from '@/data/m
 import { uploadAttachment, attachmentDownloadUrl, attachmentViewUrl, getSuggestions, type RelatedEntryOut } from '@/api/entries'
 import { addRelation, removeRelation } from '@/api/relations'
 import { deleteEntry } from '@/api/entries'
+import { suggestRelatedEntries } from '@/api/topics'
 
 const props = defineProps<{
   article: ArticleDetail
@@ -99,7 +100,29 @@ async function handleRemoveRelated(relationId: string) {
   emit('related-changed')
 }
 
-onMounted(loadSuggestions)
+// LLM suggested links
+const suggestedLinks = ref<{ id: string; title: string; type: string; img_color: string }[]>([])
+const loadingSuggestedLinks = ref(false)
+
+async function loadSuggestedLinks() {
+  loadingSuggestedLinks.value = true
+  try {
+    suggestedLinks.value = await suggestRelatedEntries(props.entryId)
+  } finally {
+    loadingSuggestedLinks.value = false
+  }
+}
+
+async function approveSuggestedLink(link: { id: string; title: string; type: string; img_color: string }) {
+  await addRelation(props.entryId, link.id, 'related')
+  suggestedLinks.value = suggestedLinks.value.filter((l) => l.id !== link.id)
+  emit('related-changed')
+}
+
+onMounted(() => {
+  loadSuggestions()
+  loadSuggestedLinks()
+})
 </script>
 
 <template>
@@ -228,6 +251,29 @@ onMounted(loadSuggestions)
           class="flex-shrink-0 text-[10.5px] text-accent border border-accent/40 px-2 py-[3px]
                  rounded-[5px] hover:bg-accent hover:text-white transition-colors duration-[120ms]"
           @click="linkAsRelated(s)"
+        >Link</button>
+      </div>
+    </div>
+
+    <!-- Suggested links (LLM) -->
+    <div v-if="suggestedLinks.length > 0" class="border-b border-line px-[18px] py-[18px]">
+      <div class="text-[10px] font-semibold tracking-[0.09em] uppercase text-ink-3 mb-[10px]">
+        Suggested links
+      </div>
+      <div
+        v-for="(link, i) in suggestedLinks"
+        :key="link.id"
+        :class="['flex items-center gap-2 py-[7px]', i < suggestedLinks.length - 1 ? 'border-b border-line' : '']"
+      >
+        <div class="flex-1 min-w-0">
+          <div class="text-[12px] text-ink truncate">{{ link.title }}</div>
+          <div class="text-[10.5px] text-ink-3">{{ link.type }}</div>
+        </div>
+        <button
+          type="button"
+          class="flex-shrink-0 text-[10.5px] text-accent border border-accent/40 px-2 py-[3px]
+                 rounded-[5px] hover:bg-accent hover:text-white transition-colors duration-[120ms]"
+          @click="approveSuggestedLink(link)"
         >Link</button>
       </div>
     </div>

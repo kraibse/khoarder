@@ -9,6 +9,7 @@ import AddModal from '@/components/molecules/AddModal.vue'
 import { useTopicsStore } from '@/stores/topics'
 import { useUIStore } from '@/stores/ui'
 import { useEntriesStore } from '@/stores/entries'
+import { generateOverview } from '@/api/topics'
 import type { FilterOption } from '@/stores/ui'
 
 const topicsStore = useTopicsStore()
@@ -66,6 +67,18 @@ function reload(q?: string) {
   const hasSpecialView = uiStore.activeSmartView || ['all', 'starred', 'inbox', 'home'].includes(topicsStore.activeTopicId)
   if (tid !== null || uiStore.searchAllTopics || hasSpecialView) {
     entriesStore.loadEntries(tid, q || undefined)
+  }
+}
+
+async function handleGenerateOverview() {
+  const topic = topicsStore.activeTopic
+  if (!topic) return
+  try {
+    const entry = await generateOverview(topic.id)
+    await entriesStore.loadEntries(topic.id)
+    window.location.href = `/article/${entry.id}`
+  } catch (e) {
+    alert(`Overview generation failed: ${(e as Error).message}`)
   }
 }
 
@@ -145,7 +158,7 @@ watch(
           <span class="text-[12.5px] text-ink-2 flex-1 truncate">
             {{ topicsStore.activeTopic.description }}
           </span>
-          <div class="flex gap-3 flex-shrink-0">
+          <div class="flex gap-3 flex-shrink-0 items-center">
             <span
               v-for="stat in topicStats"
               :key="stat"
@@ -153,6 +166,13 @@ watch(
             >
               {{ stat }}
             </span>
+            <button
+              type="button"
+              class="text-[11px] px-2 py-1 rounded-md bg-surface-3 hover:bg-accent-bg text-accent border border-accent/30 transition-colors"
+              @click="handleGenerateOverview"
+            >
+              Generate overview
+            </button>
           </div>
         </div>
 

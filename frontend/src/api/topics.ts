@@ -43,3 +43,9 @@ export const importTopic = (data: unknown, slugOrId?: string) => {
     body: JSON.stringify(data),
   })
 }
+
+export const generateOverview = (topicId: string) =>
+  apiFetch<{ id: string; title: string; body: string }>(`/topics/${topicId}/generate-overview`, { method: 'POST' })
+
+export const suggestRelatedEntries = (entryId: string) =>
+  apiFetch<{ id: string; title: string; type: string; img_color: string }[]>(`/entries/${entryId}/suggest-related`, { method: 'POST' })

@@ -13,6 +13,8 @@ from app.schemas.topic import TopicCreate, TopicOut, TopicUpdate
 from app.services import topics as svc
 from app.services.export_import import export_topic_json, import_topic_json
 from app.services import suggest as suggest_svc
+from app.services import overview as overview_svc
+from app.schemas.entry import ArticleDetailOut
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -109,3 +111,22 @@ async def import_topic(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return result
+
+
+@router.post("/{slug_or_id}/generate-overview", response_model=ArticleDetailOut, status_code=201)
+async def generate_overview(
+    slug_or_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Topic).where((Topic.slug == slug_or_id) | (Topic.id == slug_or_id))
+    )
+    topic = result.scalar_one_or_none()
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    try:
+        return await overview_svc.generate_overview(db, topic.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
