@@ -90,6 +90,20 @@ class EntryCreate(BaseModel):
         return v
 
 
+class EntryFromChatCreate(BaseModel):
+    message_id: str | None = None
+    conversation_id: str | None = None
+    type: str = "Note"
+    title: str | None = None
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in VALID_TYPES:
+            raise ValueError(f"type must be one of {sorted(VALID_TYPES)}")
+        return v
+
+
 class URLImportRequest(BaseModel):
     topic_id: str | None = None
     url: str

@@ -10,6 +10,7 @@ from app.schemas.entry import (
     ArticleDetailOut,
     BacklinkOut,
     EntryCreate,
+    EntryFromChatCreate,
     EntryOut,
     EntryUpdate,
     RelatedEntryOut,
@@ -199,29 +200,36 @@ async def upload_attachment(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    # Verify entry exists
-    entry = await svc.get_entry(db, entry_id)
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Entry not found")
-
-    import uuid
-    attachment_id = str(uuid.uuid4())
-    filename = file.filename or "upload"
-    ext = pathlib.Path(filename).suffix.lstrip(".").lower() or "bin"
-
-    try:
-        storage_path, size_bytes = await file_svc.save_file(entry_id, attachment_id, file)
-    except ValueError as exc:
-        raise HTTPException(status_code=413, detail=str(exc))
-
-    return await svc.add_attachment(
+    ext = pathlib.Path(file.filename or "file").suffix.lstrip(".").lower()
+    filename = pathlib.Path(file.filename or "file").name
+    storage_path = f"{settings.storage_path}/uploads/{entry_id}"
+    pathlib.Path(storage_path).mkdir(parents=True, exist_ok=True)
+    target = f"{storage_path}/{filename}"
+    content = await file.read()
+    with open(target, "wb") as f:
+        f.write(content)
+    return await file_svc.add_attachment(
         db,
         entry_id=entry_id,
         filename=filename,
         ext=ext,
-        size_bytes=size_bytes,
-        storage_path=storage_path,
+        size_bytes=len(content),
+        storage_path=target,
     )
+
+
+@router.post("/from-chat", response_model=ArticleDetailOut, status_code=201)
+async def create_entry_from_chat(body: EntryFromChatCreate, db: AsyncSession = Depends(get_db)):
+    try:
+        return await svc.create_entry_from_chat(
+            db,
+            message_id=body.message_id,
+            conversation_id=body.conversation_id,
+            entry_type=body.type,
+            title=body.title,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.patch("/{entry_id}", response_model=ArticleDetailOut)

@@ -620,6 +620,69 @@ async def create_entry(
     )
 
 
+async def create_entry_from_chat(
+    db: AsyncSession,
+    message_id: str | None = None,
+    conversation_id: str | None = None,
+    entry_type: str = "Note",
+    title: str | None = None,
+) -> ArticleDetailOut:
+    from app.models.message import Message
+    from app.models.conversation import Conversation
+
+    topic_id: str | None = None
+    body: str = ""
+    conv_id: str | None = None
+
+    if message_id:
+        msg_result = await db.execute(
+            select(Message).where(Message.id == message_id)
+        )
+        msg = msg_result.scalar_one_or_none()
+        if msg is None:
+            raise ValueError("Message not found")
+        body = msg.content
+        conv_id = msg.conversation_id
+        conv_result = await db.execute(
+            select(Conversation).where(Conversation.id == conv_id)
+        )
+        conv = conv_result.scalar_one_or_none()
+        if conv:
+            topic_id = conv.topic_id
+    elif conversation_id:
+        conv_result = await db.execute(
+            select(Conversation).where(Conversation.id == conversation_id)
+        )
+        conv = conv_result.scalar_one_or_none()
+        if conv is None:
+            raise ValueError("Conversation not found")
+        topic_id = conv.topic_id
+        conv_id = conversation_id
+        msgs_result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation_id, Message.role == "assistant")
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        last_assistant = msgs_result.scalar_one_or_none()
+        if last_assistant:
+            body = last_assistant.content
+    else:
+        raise ValueError("Either message_id or conversation_id is required")
+
+    final_title = title or (body[:60] + "..." if len(body) > 60 else body) or "Chat Note"
+    excerpt = body[:300] if len(body) > 300 else body
+
+    return await create_entry(
+        db,
+        topic_id=topic_id,
+        entry_type=entry_type,
+        title=final_title,
+        excerpt=excerpt,
+        body=body,
+    )
+
+
 async def add_attachment(
     db: AsyncSession,
     entry_id: str,

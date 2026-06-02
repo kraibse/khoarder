@@ -6,6 +6,7 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 import SkeletonCard from '@/components/atoms/SkeletonCard.vue'
 import { useTopicsStore } from '@/stores/topics'
 import { useConversationsStore } from '@/stores/conversations'
+import { createEntryFromChat } from '@/api/conversations'
 import type { ConversationListOut } from '@/api/conversations'
 
 const route = useRoute()
@@ -91,6 +92,15 @@ async function saveTitle(conv: ConversationListOut) {
 async function handleDeleteConversation(conv: ConversationListOut) {
   if (!confirm(`Delete "${conv.title}"?`)) return
   await convStore.removeConversation(conv.id)
+}
+
+async function saveMessageAsEntry(msgId: string, type: string) {
+  try {
+    const entry = await createEntryFromChat(msgId, undefined, type)
+    alert(`Saved as ${type}: "${entry.title}"`)
+  } catch (e) {
+    alert(`Save failed: ${(e as Error).message}`)
+  }
 }
 </script>
 
@@ -201,6 +211,22 @@ async function handleDeleteConversation(conv: ConversationListOut) {
                   : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
               >
                 <div class="whitespace-pre-wrap">{{ msg.content }}</div>
+                <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5">
+                  <button
+                    type="button"
+                    class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
+                    @click="saveMessageAsEntry(msg.id, 'Note')"
+                  >
+                    Save as note
+                  </button>
+                  <button
+                    type="button"
+                    class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
+                    @click="saveMessageAsEntry(msg.id, 'Article')"
+                  >
+                    Save as article
+                  </button>
+                </div>
               </div>
             </div>
           </template>

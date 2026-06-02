@@ -62,3 +62,20 @@ export async function sendMessage(conversationId: string, content: string): Prom
 export async function deleteMessage(conversationId: string, messageId: string): Promise<void> {
   return apiFetch(`/conversations/${conversationId}/messages/${messageId}`, { method: 'DELETE' })
 }
+
+export async function createEntryFromChat(
+  messageId?: string,
+  conversationId?: string,
+  type?: string,
+  title?: string,
+): Promise<{ id: string; title: string }> {
+  return apiFetch('/entries/from-chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message_id: messageId ?? null,
+      conversation_id: conversationId ?? null,
+      type: type ?? 'Note',
+      title: title ?? null,
+    }),
+  })
+}
