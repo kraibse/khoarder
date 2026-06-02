@@ -1,0 +1,42 @@
+# Configuration for prek - Git hook manager
+# https://prek.j178.dev
+#:schema https://www.schemastore.org/prek.json
+
+[[repos]]
+repo = "builtin"
+hooks = [
+    { id = "trailing-whitespace" },
+    { id = "end-of-file-fixer" },
+    { id = "check-yaml" },
+    { id = "check-json" },
+    { id = "check-toml" },
+    { id = "check-added-large-files", args = ["--maxkb=500"] },
+    { id = "check-merge-conflict" },
+    { id = "check-case-conflict" },
+    { id = "detect-private-key" },
+    { id = "mixed-line-ending" },
+]
+
+# Frontend checks
+[[repos]]
+repo = "local"
+hooks = [
+    { id = "frontend-type-check", name = "Frontend Type Check", entry = "sh -c 'cd frontend && pnpm type-check'", language = "system", files = "\\.(ts|tsx|vue|js|jsx)$", pass_filenames = false },
+    { id = "frontend-test", name = "Frontend Tests", entry = "sh -c 'cd frontend && pnpm test'", language = "system", files = "\\.(ts|tsx|vue|js|jsx)$", pass_filenames = false, stages = ["manual"] },
+]
+
+# Backend checks
+[[repos]]
+repo = "local"
+hooks = [
+    { id = "backend-pytest", name = "Backend Tests", entry = "sh -c 'cd backend && pytest tests/ -q'", language = "system", files = "\\.py$", pass_filenames = false, stages = ["manual"] },
+    { id = "backend-pyright", name = "Backend Type Check", entry = "sh -c 'cd backend && pyright app || true'", language = "system", files = "backend/.*\\.py$", pass_filenames = false, stages = ["manual"] },
+]
+
+# Prevent committing to main/master
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v5.0.0"
+hooks = [
+    { id = "no-commit-to-branch", args = ["--branch=main", "--branch=master"] },
+]
