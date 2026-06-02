@@ -101,6 +101,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
             # Try LM Studio management API for accurate loaded-model detection
+            mgmt_loaded_model = None
             try:
                 mgmt_resp = await client.get(mgmt_base + "/api/v0/models")
                 if mgmt_resp.status_code == 200:
@@ -108,28 +109,21 @@ async def health_check(db: AsyncSession = Depends(get_db)):
                     models = data.get("data", [])
                     loaded = [m for m in models if m.get("loaded")]
                     if loaded:
-                        return HealthOut(
-                            reachable=True,
-                            model=loaded[0].get("id", loaded[0].get("path", configured_model)),
-                            configured_model=configured_model,
-                        )
-                    # No model loaded — still reachable
-                    return HealthOut(
-                        reachable=True,
-                        model=None,
-                        configured_model=configured_model,
-                    )
+                        mgmt_loaded_model = loaded[0].get("id", loaded[0].get("path", configured_model))
             except Exception:
                 pass
-            # Fallback to OpenAI-compatible endpoint
+
+            # Fallback to OpenAI-compatible endpoint (only loaded models appear here)
             resp = await client.get(base_url.rstrip("/") + "/models")
             if resp.status_code == 200:
                 data = resp.json()
                 models = data.get("data", [])
-                loaded_model = models[0].get("id") if models else None
+                # /v1/models only returns loaded models, so any entry means a model is active
+                v1_loaded_model = models[0].get("id") if models else None
+                # Prefer management API name, but trust /v1/models existence as "loaded" signal
                 return HealthOut(
                     reachable=True,
-                    model=loaded_model or configured_model,
+                    model=mgmt_loaded_model or v1_loaded_model or configured_model,
                     configured_model=configured_model,
                 )
             return HealthOut(

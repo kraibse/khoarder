@@ -9,8 +9,8 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useMemoriesStore } from '@/stores/memories'
 import { createEntryFromChat } from '@/api/conversations'
 import type { ConversationListOut } from '@/api/conversations'
-import { checkHealth } from '@/api/config'
-import type { HealthOut } from '@/api/config'
+import { checkHealth, listModels, loadModel } from '@/api/config'
+import type { HealthOut, ModelInfo } from '@/api/config'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,6 +31,10 @@ const editingMemoryId = ref<string | null>(null)
 const editMemoryValue = ref('')
 const llmReachable = ref<boolean | null>(null)
 const llmHealthModel = ref<string | null>(null)
+const models = ref<ModelInfo[]>([])
+const selectedModel = ref('')
+const loadingModel = ref(false)
+const modelError = ref('')
 
 async function pollHealth() {
   try {
@@ -43,12 +47,45 @@ async function pollHealth() {
   }
 }
 
+async function fetchModels() {
+  try {
+    const res = await listModels()
+    models.value = res.models
+    modelError.value = res.error || ''
+    const loaded = res.models.find((m) => m.loaded)
+    if (loaded) {
+      selectedModel.value = loaded.path || loaded.id
+    } else if (res.models.length > 0) {
+      selectedModel.value = res.models[0].path || res.models[0].id
+    }
+  } catch (e) {
+    models.value = []
+    modelError.value = e instanceof Error ? e.message : 'Failed to fetch models'
+  }
+}
+
+async function handleLoadModel() {
+  if (!selectedModel.value) return
+  loadingModel.value = true
+  modelError.value = ''
+  try {
+    await loadModel(selectedModel.value)
+    await fetchModels()
+    await pollHealth()
+  } catch (e) {
+    modelError.value = e instanceof Error ? e.message : 'Failed to load model'
+  } finally {
+    loadingModel.value = false
+  }
+}
+
 let healthInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   convStore.loadConversations(topicId.value)
   memStore.loadMemories(topicId.value)
   pollHealth()
+  fetchModels()
   healthInterval = setInterval(pollHealth, 30000)
 })
 
@@ -77,6 +114,10 @@ const activeTopicName = computed(() => {
   return t?.name ?? 'Topic'
 })
 
+const isEmpty = computed(() => {
+  return !convStore.activeConversation || convStore.messages.length === 0
+})
+
 async function startNewConversation() {
   const conv = await convStore.createNewConversation(topicId.value)
   await convStore.loadConversation(conv.id)
@@ -90,6 +131,16 @@ async function selectConversation(conv: ConversationListOut) {
 async function handleSend() {
   const text = input.value.trim()
   if (!text || convStore.sending) return
+
+  // Auto-load model if none is loaded
+  if (llmReachable.value && !llmHealthModel.value && selectedModel.value && !loadingModel.value) {
+    await handleLoadModel()
+    if (!llmHealthModel.value) {
+      modelError.value = 'Model failed to load. Please check LM Studio.'
+      return
+    }
+  }
+
   if (!convStore.activeConversation) {
     const conv = await convStore.createNewConversation(topicId.value, text.slice(0, 40))
     await convStore.loadConversation(conv.id)
@@ -254,10 +305,10 @@ async function handleDeleteMemory(memId: string) {
             </div>
             <div
               v-else-if="llmReachable === true && !llmHealthModel"
-              class="text-[11px] text-danger flex items-center gap-1"
+              class="text-[11px] text-amber-600 flex items-center gap-1"
               title="No model is loaded in LM Studio"
             >
-              <span class="w-1.5 h-1.5 rounded-full bg-danger" />
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-500" />
               No model loaded
             </div>
             <div v-if="convStore.sending" class="text-[11px] text-ink-3 flex items-center gap-1">
@@ -267,84 +318,131 @@ async function handleDeleteMemory(memId: string) {
           </div>
         </div>
 
-        <!-- Messages -->
-        <div ref="scrollRef" class="flex-1 overflow-y-auto px-6 py-4">
-          <div class="max-w-3xl mx-auto space-y-4">
-            <template v-if="convStore.activeConversation">
+        <!-- Empty state: centered everything -->
+        <div v-if="isEmpty" class="flex-1 flex flex-col items-center justify-center px-6">
+          <div class="max-w-2xl w-full text-center space-y-6">
+            <div class="space-y-2">
+              <h2 class="text-[22px] font-serif text-ink">What would you like to know?</h2>
+              <p class="text-[13px] text-ink-3">Ask a question about your knowledge base.</p>
+            </div>
+
+            <!-- Model selector (only when no model loaded) -->
+            <div v-if="llmReachable === true && !llmHealthModel" class="space-y-2">
+              <div class="flex items-center justify-center gap-2">
+                <select
+                  v-model="selectedModel"
+                  class="rounded border border-line bg-surface-2 px-3 py-2 text-[13px] text-ink focus:outline-none focus:ring-1 focus:ring-accent min-w-[240px]"
+                >
+                  <option v-if="models.length === 0" value="">No models found</option>
+                  <option v-for="m in models" :key="m.id" :value="m.path || m.id">
+                    {{ m.id }}{{ m.loaded ? ' (loaded)' : '' }}
+                  </option>
+                </select>
+                <button
+                  type="button"
+                  class="rounded border border-line px-3 py-2 text-[13px] text-ink-2 hover:bg-surface-2 disabled:opacity-50 whitespace-nowrap"
+                  :disabled="loadingModel || !selectedModel"
+                  @click="handleLoadModel"
+                >
+                  {{ loadingModel ? 'Loading…' : 'Load model' }}
+                </button>
+              </div>
+              <div v-if="modelError" class="text-[11px] text-danger">{{ modelError }}</div>
+            </div>
+
+            <!-- Centered input -->
+            <div class="flex items-end gap-2 bg-surface-3 rounded-xl border border-line px-3 py-2 focus-within:border-accent transition-colors max-w-2xl mx-auto">
+              <textarea
+                v-model="input"
+                rows="1"
+                class="flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-3 resize-none outline-none max-h-[120px] min-h-[44px]"
+                placeholder="Ask anything..."
+                @keydown="handleKeydown"
+                @input="(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }"
+              />
+              <button
+                type="button"
+                class="p-2 rounded-lg bg-accent text-white hover:opacity-90 transition-opacity flex-shrink-0 disabled:opacity-40"
+                :disabled="!input.trim() || convStore.sending"
+                @click="handleSend"
+              >
+                <AppIcon name="send" :size="14" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Non-empty: messages + bottom input -->
+        <template v-else>
+          <div ref="scrollRef" class="flex-1 overflow-y-auto px-6 py-4">
+            <div class="max-w-3xl mx-auto space-y-4">
               <div
                 v-for="msg in convStore.messages"
                 :key="msg.id"
                 class="flex"
                 :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
               >
-              <div
-                class="max-w-[80%] px-4 py-2.5 rounded-2xl text-[13px] leading-relaxed"
-                :class="msg.role === 'user'
-                  ? 'bg-accent text-white rounded-br-md'
-                  : msg.id.startsWith('err-')
-                    ? 'bg-[var(--danger-bg)] text-danger rounded-bl-md border border-danger'
-                    : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
-              >
-                <div class="whitespace-pre-wrap">{{ msg.content }}</div>
-                <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-') && !msg.id.startsWith('err-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5 flex-wrap">
-                  <button
-                    type="button"
-                    class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
-                    @click="saveMessageAsEntry(msg.id, 'Note')"
-                  >
-                    Save as note
-                  </button>
-                  <button
-                    type="button"
-                    class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
-                    @click="saveMessageAsEntry(msg.id, 'Article')"
-                  >
-                    Save as article
-                  </button>
-                  <button
-                    type="button"
-                    class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
-                    @click="addMemoryFromMessage(msg.content)"
-                  >
-                    Add memory
-                  </button>
-                </div>
-              </div>
-            </div>
-            </template>
-
-            <div v-else class="flex items-center justify-center h-full text-ink-3 text-[13px]">
-              <div class="text-center space-y-1">
-                <div>Select a conversation or start a new one.</div>
-                <div v-if="llmReachable === true && !llmHealthModel" class="text-danger text-[11px]">
-                  No model is loaded in LM Studio. Go to Settings to load a model.
+                <div
+                  class="max-w-[80%] px-4 py-2.5 rounded-2xl text-[13px] leading-relaxed"
+                  :class="msg.role === 'user'
+                    ? 'bg-accent text-white rounded-br-md'
+                    : msg.id.startsWith('err-')
+                      ? 'bg-[var(--danger-bg)] text-danger rounded-bl-md border border-danger'
+                      : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
+                >
+                  <div class="whitespace-pre-wrap">{{ msg.content }}</div>
+                  <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-') && !msg.id.startsWith('err-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
+                      @click="saveMessageAsEntry(msg.id, 'Note')"
+                    >
+                      Save as note
+                    </button>
+                    <button
+                      type="button"
+                      class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
+                      @click="saveMessageAsEntry(msg.id, 'Article')"
+                    >
+                      Save as article
+                    </button>
+                    <button
+                      type="button"
+                      class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
+                      @click="addMemoryFromMessage(msg.content)"
+                    >
+                      Add memory
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Input -->
-        <div class="px-6 py-3 border-t border-line flex-shrink-0">
-          <div class="flex items-end gap-2 bg-surface-3 rounded-xl border border-line px-3 py-2 focus-within:border-accent transition-colors">
-            <textarea
-              v-model="input"
-              rows="1"
-              class="flex-1 bg-transparent text-[13px] text-ink placeholder:text-ink-3 resize-none outline-none max-h-[120px]"
-              placeholder="Ask anything..."
-              @keydown="handleKeydown"
-              @input="(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }"
-            />
-            <button
-              type="button"
-              class="p-2 rounded-lg bg-accent text-white hover:opacity-90 transition-opacity flex-shrink-0 disabled:opacity-40"
-              :disabled="!input.trim() || convStore.sending || (llmReachable === true && !llmHealthModel)"
-              @click="handleSend"
-            >
-              <AppIcon name="send" :size="14" />
-            </button>
+          <!-- Bottom input -->
+          <div class="px-6 py-3 border-t border-line flex-shrink-0">
+            <div class="max-w-3xl mx-auto">
+              <div class="flex items-end gap-2 bg-surface-3 rounded-xl border border-line px-3 py-2 focus-within:border-accent transition-colors">
+                <textarea
+                  v-model="input"
+                  rows="1"
+                  class="flex-1 bg-transparent text-[13px] text-ink placeholder:text-ink-3 resize-none outline-none max-h-[120px]"
+                  placeholder="Ask anything..."
+                  @keydown="handleKeydown"
+                  @input="(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px' }"
+                />
+                <button
+                  type="button"
+                  class="p-2 rounded-lg bg-accent text-white hover:opacity-90 transition-opacity flex-shrink-0 disabled:opacity-40"
+                  :disabled="!input.trim() || convStore.sending"
+                  @click="handleSend"
+                >
+                  <AppIcon name="send" :size="14" />
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
 
       <!-- Memory sidebar -->
