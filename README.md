@@ -1,8 +1,26 @@
-# Knowledge Hoarder
+<div style="text-align:center; align: center; width: 100%">
+  <h1 style="font-family: 'DW Serif Display', 'Georgia', serif">Knowledge Hoarder</h1>
+  <img style="width: 128px" src="assets/khoarder.svg" />
 
-A self-hosted personal knowledge base. Topic-driven, image-first, AI-augmented on demand.
+  <br/>
 
----
+  <div>
+    <img alt="Docker Badge" src="https://img.shields.io/badge/Docker-2CA5E0?style=for-the-badge&logo=docker&logoColor=white" />
+    <img src="https://img.shields.io/badge/Vue%20js-35495E?style=for-the-badge&logo=vuedotjs&logoColor=4FC08D" />
+    <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" />
+    <img src="https://img.shields.io/badge/Python-FFD43B?style=for-the-badge&logo=python&logoColor=blue" />
+  </div>
+
+  <div>
+    <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/kraibse/khoarder/ci.yml">
+  </div>
+  <p>A self-hosted personal knowledge base. Topic-driven, image-first, AI-augmented on demand.</p>
+</div>
+
+
+
+![](assets/khoarder-preview.png)
+
 
 ## Running the app
 
