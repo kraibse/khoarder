@@ -7,8 +7,8 @@ import SkeletonCard from '@/components/atoms/SkeletonCard.vue'
 import { useTopicsStore } from '@/stores/topics'
 import { useConversationsStore } from '@/stores/conversations'
 import { useMemoriesStore } from '@/stores/memories'
-import { createEntryFromChat } from '@/api/conversations'
-import type { ConversationListOut } from '@/api/conversations'
+import { createEntryFromChat, sendMessage, deleteMessage } from '@/api/conversations'
+import type { ConversationListOut, MessageOut } from '@/api/conversations'
 import { checkHealth, listModels, loadModel } from '@/api/config'
 import type { HealthOut, ModelInfo } from '@/api/config'
 
@@ -181,6 +181,34 @@ async function saveMessageAsEntry(msgId: string, type: string) {
   } catch (e) {
     alert(`Save failed: ${(e as Error).message}`)
   }
+}
+
+async function regenerateResponse(assistantMsg: MessageOut) {
+  const convId = convStore.activeConversation?.id
+  if (!convId) return
+  // Find the user message just before this assistant message
+  const msgs = convStore.messages
+  const idx = msgs.findIndex((m) => m.id === assistantMsg.id)
+  if (idx <= 0) return
+  const userMsg = msgs[idx - 1]
+  if (userMsg.role !== 'user') return
+  // Remove the stale assistant message from local array first (optimistic)
+  convStore.messages = msgs.filter((m) => m.id !== assistantMsg.id)
+  try {
+    await deleteMessage(convId, assistantMsg.id)
+    const response = await sendMessage(convId, userMsg.content)
+    convStore.messages.push(response)
+  } catch (e) {
+    alert(`Regeneration failed: ${(e as Error).message}`)
+    // Re-add the original message on failure
+    convStore.messages.splice(idx, 0, assistantMsg)
+  }
+}
+
+function copyMessage(content: string) {
+  navigator.clipboard.writeText(content).catch(() => {
+    alert('Failed to copy to clipboard')
+  })
 }
 
 async function addMemoryFromMessage(content: string) {
@@ -391,27 +419,46 @@ async function handleDeleteMemory(memId: string) {
                       : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
                 >
                   <div class="whitespace-pre-wrap">{{ msg.content }}</div>
-                  <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-') && !msg.id.startsWith('err-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5 flex-wrap">
+                  <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-') && !msg.id.startsWith('err-')" class="mt-2 flex items-center gap-1.5 border-t border-line pt-1.5">
                     <button
                       type="button"
-                      class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
-                      @click="saveMessageAsEntry(msg.id, 'Note')"
+                      class="rounded p-1 text-ink-3 transition-colors hover:text-ink hover:bg-surface-2"
+                      title="Regenerate"
+                      @click="regenerateResponse(msg)"
                     >
-                      Save as note
+                      <AppIcon name="refresh" :size="14" />
                     </button>
                     <button
                       type="button"
-                      class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
-                      @click="saveMessageAsEntry(msg.id, 'Article')"
+                      class="rounded p-1 text-ink-3 transition-colors hover:text-ink hover:bg-surface-2"
+                      title="Copy"
+                      @click="copyMessage(msg.content)"
                     >
-                      Save as article
+                      <AppIcon name="copy" :size="14" />
                     </button>
                     <button
                       type="button"
-                      class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
+                      class="rounded p-1 text-ink-3 transition-colors hover:text-ink hover:bg-surface-2"
+                      title="Add memory"
                       @click="addMemoryFromMessage(msg.content)"
                     >
-                      Add memory
+                      <AppIcon name="plus-circle" :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded p-1 text-ink-3 transition-colors hover:text-ink hover:bg-surface-2"
+                      title="Save as note"
+                      @click="saveMessageAsEntry(msg.id, 'Note')"
+                    >
+                      <AppIcon name="document-text" :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded p-1 text-ink-3 transition-colors hover:text-ink hover:bg-surface-2"
+                      title="Save as article"
+                      @click="saveMessageAsEntry(msg.id, 'Article')"
+                    >
+                      <AppIcon name="newspaper" :size="14" />
                     </button>
                   </div>
                 </div>

@@ -55,6 +55,7 @@ const icons: Record<string, string> = {
   x: `<path d="M4 4l8 8M12 4l-8 8"/>`,
   'external-link': `<path d="M9 2h5v5"/><path d="M14 2L7 9"/><path d="M12 9v4a1 1 0 01-1 1H3a1 1 0 01-1-1V5a1 1 0 011-1h4"/>`,
   sparkle: `<path d="M5 2l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z"/><path d="M11 8l1 1.5 1.5 1-1.5 1-1 1.5-1-1.5-1.5-1 1.5-1 1-1.5z"/>`,
+  refresh: `<path d="M2 8a6 6 0 0112 0"/><path d="M14 8l-2-2 2-2"/>`,
 }
 </script>
 
