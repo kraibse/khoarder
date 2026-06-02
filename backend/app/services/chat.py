@@ -9,27 +9,31 @@ from app.models.entry import Entry
 from app.schemas.conversation import ConversationOut, ConversationListOut
 from app.schemas.message import MessageOut
 from app.services import memory as memory_svc
+from app.services import config as config_svc
 
 
-def _require_client():
-    if not settings.llm_base_url.strip():
+async def _require_client(db: AsyncSession):
+    base_url = await config_svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
+    if not base_url.strip():
         raise RuntimeError(
             "LM Studio is not configured. Set LLM_BASE_URL in your .env file "
             "(e.g. LLM_BASE_URL=http://192.168.1.100:1234/v1)."
         )
     from openai import AsyncOpenAI
 
+    timeout = float(await config_svc.get_config_value(db, "llm_timeout", default=str(settings.llm_timeout)))
     return AsyncOpenAI(
-        base_url=settings.llm_base_url.rstrip("/") + "/",
+        base_url=base_url.rstrip("/") + "/",
         api_key="not-needed",
-        timeout=float(settings.llm_timeout),
+        timeout=timeout,
     )
 
 
-async def _chat(messages: list[dict], max_tokens: int = 1024, temperature: float = 0.3) -> str:
-    client = _require_client()
+async def _chat(db: AsyncSession, messages: list[dict], max_tokens: int = 1024, temperature: float = 0.3) -> str:
+    client = await _require_client(db)
+    model = await config_svc.get_config_value(db, "llm_model", default=settings.llm_model)
     response = await client.chat.completions.create(
-        model=settings.llm_model,
+        model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -132,11 +136,13 @@ async def send_message(db: AsyncSession, conversation_id: str, content: str) -> 
     await db.commit()
     await db.refresh(user_msg)
 
+    context_entries = int(await config_svc.get_config_value(db, "llm_context_entries", default=str(settings.llm_context_entries)))
+
     prior = [m for m in conv.messages if m.role in ("user", "assistant")]
     prior.sort(key=lambda m: m.created_at)
-    history = prior[-settings.llm_context_entries:] if len(prior) > settings.llm_context_entries else prior
+    history = prior[-context_entries:] if len(prior) > context_entries else prior
 
-    entries = await _retrieve(db, conv.topic_id, content, settings.llm_context_entries)
+    entries = await _retrieve(db, conv.topic_id, content, context_entries)
 
     context_parts: list[str] = []
     for entry in entries:
@@ -177,7 +183,7 @@ async def send_message(db: AsyncSession, conversation_id: str, content: str) -> 
     for msg in history:
         llm_messages.append({"role": msg.role, "content": msg.content})
 
-    answer = await _chat(llm_messages, max_tokens=1024, temperature=0.3)
+    answer = await _chat(db, llm_messages, max_tokens=1024, temperature=0.3)
 
     assistant_msg = Message(conversation_id=conversation_id, role="assistant", content=answer)
     db.add(assistant_msg)

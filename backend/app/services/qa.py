@@ -20,30 +20,34 @@ from app.schemas.qa import (
     QAResponse,
     QASource,
 )
+from app.services import config as config_svc
 
 
 # ── LM Studio client ──────────────────────────────────────────────────────────
 
-def _require_client():
+async def _require_client(db: AsyncSession):
     """Return an AsyncOpenAI client pointed at LM Studio. Raises if not configured."""
-    if not settings.llm_base_url.strip():
+    base_url = await config_svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
+    if not base_url.strip():
         raise RuntimeError(
             "LM Studio is not configured. Set LLM_BASE_URL in your .env file "
             "(e.g. LLM_BASE_URL=http://192.168.1.100:1234/v1)."
         )
     from openai import AsyncOpenAI
 
+    timeout = float(await config_svc.get_config_value(db, "llm_timeout", default=str(settings.llm_timeout)))
     return AsyncOpenAI(
-        base_url=settings.llm_base_url.rstrip("/") + "/",
+        base_url=base_url.rstrip("/") + "/",
         api_key="not-needed",           # LM Studio ignores the key
-        timeout=float(settings.llm_timeout),
+        timeout=timeout,
     )
 
 
-async def _chat(messages: list[dict], max_tokens: int = 1024, temperature: float = 0.3) -> str:
-    client = _require_client()
+async def _chat(db: AsyncSession, messages: list[dict], max_tokens: int = 1024, temperature: float = 0.3) -> str:
+    client = await _require_client(db)
+    model = await config_svc.get_config_value(db, "llm_model", default=settings.llm_model)
     response = await client.chat.completions.create(
-        model=settings.llm_model,
+        model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -84,7 +88,8 @@ async def _load_entry(db: AsyncSession, entry_id: str) -> Entry | None:
 # ── Q&A ───────────────────────────────────────────────────────────────────────
 
 async def ask_question(db: AsyncSession, question: str, topic_id: str) -> QAResponse:
-    entries = await _retrieve(db, topic_id, question, settings.llm_context_entries)
+    context_entries = int(await config_svc.get_config_value(db, "llm_context_entries", default=str(settings.llm_context_entries)))
+    entries = await _retrieve(db, topic_id, question, context_entries)
 
     context_parts: list[str] = []
     sources: list[QASource] = []
@@ -100,7 +105,7 @@ async def ask_question(db: AsyncSession, question: str, topic_id: str) -> QAResp
 
     context = "\n\n---\n\n".join(context_parts)
 
-    answer = await _chat([
+    answer = await _chat(db, [
         {
             "role": "system",
             "content": (
@@ -129,7 +134,7 @@ async def assist_summarize(db: AsyncSession, entry_id: str) -> AssistSummarizeRe
     if not body:
         return AssistSummarizeResponse(summary="No content to summarize.")
 
-    summary = await _chat([
+    summary = await _chat(db, [
         {
             "role": "system",
             "content": "Summarize the following article in 2-3 sentences. Output only the summary, no preamble.",
@@ -151,7 +156,7 @@ async def assist_tags(db: AsyncSession, entry_id: str) -> AssistTagsResponse:
     existing = {t.name for t in entry.tags}
     body = ((entry.excerpt or "") + "\n" + (entry.body or "")).strip()
 
-    raw = await _chat([
+    raw = await _chat(db, [
         {
             "role": "system",
             "content": (
@@ -179,7 +184,8 @@ async def assist_related(db: AsyncSession, entry_id: str) -> AssistRelatedRespon
 
     # Use the entry's title + excerpt as the search query
     query = f"{entry.title} {entry.excerpt}"[:200]
-    candidates = await _retrieve(db, entry.topic_id, query, settings.llm_context_entries + 1)
+    context_entries = int(await config_svc.get_config_value(db, "llm_context_entries", default=str(settings.llm_context_entries)))
+    candidates = await _retrieve(db, entry.topic_id, query, context_entries + 1)
 
     # Exclude the entry itself and already-related entries
     from app.models.relation import Relation
@@ -191,7 +197,7 @@ async def assist_related(db: AsyncSession, entry_id: str) -> AssistRelatedRespon
     )
     existing_ids = {r[0] for r in existing_result} | {entry_id}
 
-    filtered = [e for e in candidates if e.id not in existing_ids][: settings.llm_context_entries]
+    filtered = [e for e in candidates if e.id not in existing_ids][:context_entries]
 
     return AssistRelatedResponse(entries=[
         AssistRelatedEntry(id=e.id, title=e.title, type=e.type, img_color=e.img_color)
@@ -212,9 +218,10 @@ async def assist_extend(db: AsyncSession, entry_id: str, prompt: str = "") -> As
         "the given article. Output ONLY the extension text in Markdown, ready to append "
         "after existing content. Do not repeat, summarize, or reference the existing text."
     )
-    system_prompt = (settings.system_prompt or default_prompt).strip() or default_prompt
+    system_prompt = await config_svc.get_config_value(db, "system_prompt", default=settings.system_prompt or default_prompt)
+    system_prompt = system_prompt.strip() or default_prompt
 
-    extension = await _chat([
+    extension = await _chat(db, [
         {
             "role": "system",
             "content": system_prompt,

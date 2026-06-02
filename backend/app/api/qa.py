@@ -17,17 +17,20 @@ from app.schemas.qa import (
     QAStatusResponse,
 )
 from app.services import qa as svc
+from app.services import config as config_svc
 
 router = APIRouter(tags=["qa"])
 
 
 @router.get("/qa/status", response_model=QAStatusResponse)
-async def qa_status():
+async def qa_status(db: AsyncSession = Depends(get_db)):
     """Check whether LM Studio is configured (does not ping the endpoint)."""
-    configured = bool(settings.llm_base_url.strip())
+    base_url = await config_svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
+    configured = bool(base_url.strip())
+    model = await config_svc.get_config_value(db, "llm_model", default=settings.llm_model) if configured else None
     return QAStatusResponse(
         configured=configured,
-        model=settings.llm_model if configured else None,
+        model=model,
     )
 
 
