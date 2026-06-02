@@ -63,6 +63,84 @@ export async function sendMessage(conversationId: string, content: string): Prom
   })
 }
 
+export interface StreamCallbacks {
+  onToken: (token: string) => void
+  onDone: (message: MessageOut) => void
+  onError: (error: string) => void
+}
+
+export function sendMessageStream(
+  conversationId: string,
+  content: string,
+  callbacks: StreamCallbacks,
+): () => void {
+  const url = `${import.meta.env.VITE_API_BASE_URL || ''}/conversations/${conversationId}/messages/stream`
+  const abortController = new AbortController()
+
+  const run = async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+        signal: abortController.signal,
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        callbacks.onError(`HTTP ${response.status}: ${text}`)
+        return
+      }
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const payload = line.slice(6).trim()
+          if (payload === '[DONE]') continue
+          try {
+            const event = JSON.parse(payload)
+            if (event.type === 'token') {
+              callbacks.onToken(event.content)
+            } else if (event.type === 'done') {
+              callbacks.onDone(event.message as MessageOut)
+            }
+          } catch {
+            // Fallback: treat raw payload as a token (non-JSON legacy line)
+            callbacks.onToken(payload)
+          }
+        }
+      }
+      // Process remaining buffer
+      if (buffer.startsWith('data: ')) {
+        const payload = buffer.slice(6).trim()
+        if (payload && payload !== '[DONE]') {
+          try {
+            const event = JSON.parse(payload)
+            if (event.type === 'done') {
+              callbacks.onDone(event.message as MessageOut)
+            }
+          } catch {
+            callbacks.onToken(payload)
+          }
+        }
+      }
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        callbacks.onError(e.message || 'Stream failed')
+      }
+    }
+  }
+
+  run()
+  return () => abortController.abort()
+}
+
 export async function deleteMessage(conversationId: string, messageId: string): Promise<void> {
   return apiFetch(`/conversations/${conversationId}/messages/${messageId}`, { method: 'DELETE' })
 }

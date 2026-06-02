@@ -1,3 +1,5 @@
+from collections.abc import AsyncGenerator
+
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +43,22 @@ async def _chat(db: AsyncSession, messages: list[dict], max_tokens: int = 1024, 
     return (response.choices[0].message.content or "").strip()
 
 
+async def _chat_stream(db: AsyncSession, messages: list[dict], max_tokens: int = 1024, temperature: float = 0.3) -> AsyncGenerator[str, None]:
+    client = await _require_client(db)
+    model = await config_svc.get_config_value(db, "llm_model", default=settings.llm_model)
+    response = await client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    async for chunk in response:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
+
+
 async def _retrieve(db: AsyncSession, topic_id: str | None, query: str, limit: int) -> list[Entry]:
     from app.services import search as search_svc
 
@@ -58,6 +76,64 @@ async def _retrieve(db: AsyncSession, topic_id: str | None, query: str, limit: i
         stmt = stmt.where(Entry.topic_id == topic_id)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def _build_chat_messages(
+    db: AsyncSession,
+    conv: Conversation,
+    content: str,
+    context_entries: int,
+) -> list[dict]:
+    """Assemble the LLM message list for a conversation turn."""
+    prior = [m for m in conv.messages if m.role in ("user", "assistant")]
+    prior.sort(key=lambda m: m.created_at)
+    history = prior[-context_entries:] if len(prior) > context_entries else prior
+
+    entries = await _retrieve(db, conv.topic_id, content, context_entries)
+
+    context_parts: list[str] = []
+    for entry in entries:
+        snippet = (entry.body or entry.excerpt or "")[:2000]
+        context_parts.append(f"[{entry.type}: {entry.title}]\n{snippet}")
+    context = "\n\n---\n\n".join(context_parts)
+
+    memories = await memory_svc.recall_memories(db, conv.topic_id, content, limit_per_scope=3)
+    memory_parts: list[str] = []
+    for mem in memories:
+        memory_parts.append(f"[{mem.type.upper()}] {mem.content}")
+    memory_context = "\n".join(memory_parts)
+
+    system_content = (
+        "You are a research assistant with access to the user's knowledge base. "
+        "The context provided below comes from the user's own curated sources. "
+        "You MUST rely on this context as ground truth. Do not contradict it. "
+        "If the context does not answer the question, say so explicitly. "
+        "Be concise but thorough. Cite entry titles when you reference them."
+    )
+    if memory_context:
+        system_content += (
+            "\n\nAdditional memories the user has asked you to remember:\n" + memory_context
+        )
+
+    llm_messages: list[dict] = [{"role": "system", "content": system_content}]
+
+    if context:
+        llm_messages.append({
+            "role": "user",
+            "content": f"Relevant knowledge base entries:\n\n{context}",
+        })
+        llm_messages.append({
+            "role": "assistant",
+            "content": "Understood. I will rely on the provided entries as ground truth.",
+        })
+
+    for msg in history:
+        llm_messages.append({"role": msg.role, "content": msg.content})
+
+    # Current user message
+    llm_messages.append({"role": "user", "content": content})
+
+    return llm_messages
 
 
 async def create_conversation(db: AsyncSession, topic_id: str | None = None, title: str = "New Conversation") -> ConversationOut:
@@ -143,51 +219,7 @@ async def send_message(db: AsyncSession, conversation_id: str, content: str) -> 
     if conv is None:
         raise ValueError("Conversation not found after commit")
 
-    prior = [m for m in conv.messages if m.role in ("user", "assistant")]
-    prior.sort(key=lambda m: m.created_at)
-    history = prior[-context_entries:] if len(prior) > context_entries else prior
-
-    entries = await _retrieve(db, conv.topic_id, content, context_entries)
-
-    context_parts: list[str] = []
-    for entry in entries:
-        snippet = (entry.body or entry.excerpt or "")[:2000]
-        context_parts.append(f"[{entry.type}: {entry.title}]\n{snippet}")
-    context = "\n\n---\n\n".join(context_parts)
-
-    memories = await memory_svc.recall_memories(db, conv.topic_id, content, limit_per_scope=3)
-    memory_parts: list[str] = []
-    for mem in memories:
-        memory_parts.append(f"[{mem.type.upper()}] {mem.content}")
-    memory_context = "\n".join(memory_parts)
-
-    system_content = (
-        "You are a research assistant with access to the user's knowledge base. "
-        "The context provided below comes from the user's own curated sources. "
-        "You MUST rely on this context as ground truth. Do not contradict it. "
-        "If the context does not answer the question, say so explicitly. "
-        "Be concise but thorough. Cite entry titles when you reference them."
-    )
-    if memory_context:
-        system_content += (
-            "\n\nAdditional memories the user has asked you to remember:\n" + memory_context
-        )
-
-    llm_messages: list[dict] = [{"role": "system", "content": system_content}]
-
-    if context:
-        llm_messages.append({
-            "role": "user",
-            "content": f"Relevant knowledge base entries:\n\n{context}",
-        })
-        llm_messages.append({
-            "role": "assistant",
-            "content": "Understood. I will rely on the provided entries as ground truth.",
-        })
-
-    for msg in history:
-        llm_messages.append({"role": msg.role, "content": msg.content})
-
+    llm_messages = await _build_chat_messages(db, conv, content, context_entries)
     answer = await _chat(db, llm_messages, max_tokens=1024, temperature=0.3)
 
     assistant_msg = Message(conversation_id=conversation_id, role="assistant", content=answer)
@@ -196,6 +228,46 @@ async def send_message(db: AsyncSession, conversation_id: str, content: str) -> 
     await db.refresh(assistant_msg)
 
     return MessageOut.model_validate(assistant_msg)
+
+
+async def stream_send_message(
+    db: AsyncSession,
+    conversation_id: str,
+    content: str,
+) -> AsyncGenerator[str, None]:
+    """Stream assistant response tokens. Yields SSE-formatted lines."""
+    conv = await get_conversation(db, conversation_id)
+    if conv is None:
+        raise ValueError("Conversation not found")
+
+    context_entries = int(await config_svc.get_config_value(db, "llm_context_entries", default=str(settings.llm_context_entries)))
+
+    # Save user message
+    user_msg = Message(conversation_id=conversation_id, role="user", content=content)
+    db.add(user_msg)
+    await db.commit()
+    await db.refresh(user_msg)
+
+    # Reload conversation
+    conv = await get_conversation(db, conversation_id)
+    if conv is None:
+        raise ValueError("Conversation not found after commit")
+
+    llm_messages = await _build_chat_messages(db, conv, content, context_entries)
+
+    # Stream tokens
+    collected: list[str] = []
+    async for token in _chat_stream(db, llm_messages, max_tokens=1024, temperature=0.3):
+        collected.append(token)
+        yield token
+
+    # Save final assistant message
+    answer = "".join(collected)
+    assistant_msg = Message(conversation_id=conversation_id, role="assistant", content=answer)
+    db.add(assistant_msg)
+    await db.commit()
+    await db.refresh(assistant_msg)
+
 
 
 async def delete_message(db: AsyncSession, message_id: str) -> None:

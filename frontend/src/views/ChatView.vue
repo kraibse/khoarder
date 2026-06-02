@@ -100,13 +100,13 @@ onUnmounted(() => {
   if (healthInterval) clearInterval(healthInterval)
 })
 
-watch(() => convStore.messages.length, () => {
+watch(() => convStore.messages, () => {
   nextTick(() => {
     if (scrollRef.value) {
       scrollRef.value.scrollTop = scrollRef.value.scrollHeight
     }
   })
-})
+}, { deep: true })
 
 const activeTopicName = computed(() => {
   if (!topicId.value) return 'Global'
@@ -147,7 +147,7 @@ async function handleSend() {
     await convStore.loadConversations(topicId.value)
   }
   input.value = ''
-  await convStore.postMessage(convStore.activeConversation!.id, text)
+  convStore.postMessageStream(convStore.activeConversation!.id, text)
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -418,8 +418,8 @@ async function handleDeleteMemory(memId: string) {
                       ? 'bg-[var(--danger-bg)] text-danger rounded-bl-md border border-danger'
                       : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
                 >
-                  <div class="whitespace-pre-wrap">{{ msg.content }}</div>
-                  <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-') && !msg.id.startsWith('err-')" class="mt-2 flex items-center gap-1.5 border-t border-line pt-1.5">
+                  <div class="whitespace-pre-wrap">{{ msg.content }}<span v-if="msg.id === convStore.streamingMessageId" class="inline-block w-[6px] h-[13px] ml-0.5 align-middle bg-accent animate-pulse rounded-sm" /></div>
+                  <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-') && !msg.id.startsWith('err-') && msg.id !== convStore.streamingMessageId" class="mt-2 flex items-center gap-1.5 border-t border-line pt-1.5">
                     <button
                       type="button"
                       class="rounded p-1 text-ink-3 transition-colors hover:text-ink hover:bg-surface-2"

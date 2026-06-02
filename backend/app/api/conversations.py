@@ -1,4 +1,7 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -66,6 +69,44 @@ async def send_message(
 ):
     try:
         return await chat_svc.send_message(db, conversation_id, content=body.content)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.post("/{conversation_id}/messages/stream")
+async def send_message_stream(
+    conversation_id: str,
+    body: MessageCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream assistant response as Server-Sent Events."""
+    try:
+        async def event_generator():
+            async for token in chat_svc.stream_send_message(db, conversation_id, content=body.content):
+                payload = json.dumps({"type": "token", "content": token})
+                yield f"data: {payload}\n\n"
+
+            # Fetch the persisted assistant message
+            conv = await chat_svc.get_conversation(db, conversation_id)
+            if conv and conv.messages:
+                last = max(conv.messages, key=lambda m: m.created_at)
+                if last.role == "assistant":
+                    done = json.dumps(
+                        {
+                            "type": "done",
+                            "message": MessageOut.model_validate(last).model_dump(mode="json"),
+                        }
+                    )
+                    yield f"data: {done}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
     except ValueError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     except RuntimeError as exc:

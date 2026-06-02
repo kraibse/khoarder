@@ -8,6 +8,7 @@ import {
   updateConversation,
   deleteConversation,
   sendMessage,
+  sendMessageStream,
   deleteMessage,
 } from '@/api/conversations'
 
@@ -17,6 +18,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   const messages = ref<MessageOut[]>([])
   const loading = ref(false)
   const sending = ref(false)
+  const streamingMessageId = ref<string | null>(null)
 
   async function loadConversations(topicId?: string) {
     loading.value = true
@@ -99,6 +101,72 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
+  function postMessageStream(conversationId: string, content: string): () => void {
+    sending.value = true
+    streamingMessageId.value = `stream-${Date.now()}`
+
+    const userMsg: MessageOut = {
+      id: `tmp-${Date.now()}`,
+      conversation_id: conversationId,
+      role: 'user',
+      content,
+      created_at: new Date().toISOString(),
+      entry_id: null,
+    }
+    messages.value.push(userMsg)
+
+    const placeholder: MessageOut = {
+      id: streamingMessageId.value,
+      conversation_id: conversationId,
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString(),
+      entry_id: null,
+    }
+    messages.value.push(placeholder)
+
+    let abortFn: (() => void) | null = null
+
+    abortFn = sendMessageStream(conversationId, content, {
+      onToken: (token) => {
+        const msg = messages.value.find((m) => m.id === streamingMessageId.value)
+        if (msg) {
+          msg.content += token
+        }
+      },
+      onDone: (finalMsg) => {
+        const idx = messages.value.findIndex((m) => m.id === streamingMessageId.value)
+        if (idx !== -1) {
+          messages.value[idx] = finalMsg
+        }
+        streamingMessageId.value = null
+        sending.value = false
+        const cidx = conversations.value.findIndex((c) => c.id === conversationId)
+        if (cidx !== -1) {
+          conversations.value[cidx].message_count += 2
+          conversations.value[cidx].updated_at = new Date().toISOString()
+        }
+      },
+      onError: (error) => {
+        const idx = messages.value.findIndex((m) => m.id === streamingMessageId.value)
+        if (idx !== -1) {
+          messages.value[idx] = {
+            id: `err-${Date.now()}`,
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: `LLM request failed: ${error || 'Please check that LM Studio is running and a model is loaded.'}`,
+            created_at: new Date().toISOString(),
+            entry_id: null,
+          }
+        }
+        streamingMessageId.value = null
+        sending.value = false
+      },
+    })
+
+    return abortFn
+  }
+
   async function removeMessage(conversationId: string, messageId: string) {
     await deleteMessage(conversationId, messageId)
     messages.value = messages.value.filter((m) => m.id !== messageId)
@@ -110,12 +178,14 @@ export const useConversationsStore = defineStore('conversations', () => {
     messages,
     loading,
     sending,
+    streamingMessageId,
     loadConversations,
     createNewConversation,
     loadConversation,
     renameConversation,
     removeConversation,
     postMessage,
+    postMessageStream,
     removeMessage,
   }
 })
