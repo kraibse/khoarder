@@ -8,6 +8,7 @@ from app.models.message import Message
 from app.models.entry import Entry
 from app.schemas.conversation import ConversationOut, ConversationListOut
 from app.schemas.message import MessageOut
+from app.services import memory as memory_svc
 
 
 def _require_client():
@@ -143,18 +144,25 @@ async def send_message(db: AsyncSession, conversation_id: str, content: str) -> 
         context_parts.append(f"[{entry.type}: {entry.title}]\n{snippet}")
     context = "\n\n---\n\n".join(context_parts)
 
-    llm_messages: list[dict] = [
-        {
-            "role": "system",
-            "content": (
-                "You are a research assistant with access to the user's knowledge base. "
-                "The context provided below comes from the user's own curated sources. "
-                "You MUST rely on this context as ground truth. Do not contradict it. "
-                "If the context does not answer the question, say so explicitly. "
-                "Be concise but thorough. Cite entry titles when you reference them."
-            ),
-        },
-    ]
+    memories = await memory_svc.recall_memories(db, conv.topic_id, content, limit_per_scope=3)
+    memory_parts: list[str] = []
+    for mem in memories:
+        memory_parts.append(f"[{mem.type.upper()}] {mem.content}")
+    memory_context = "\n".join(memory_parts)
+
+    system_content = (
+        "You are a research assistant with access to the user's knowledge base. "
+        "The context provided below comes from the user's own curated sources. "
+        "You MUST rely on this context as ground truth. Do not contradict it. "
+        "If the context does not answer the question, say so explicitly. "
+        "Be concise but thorough. Cite entry titles when you reference them."
+    )
+    if memory_context:
+        system_content += (
+            "\n\nAdditional memories the user has asked you to remember:\n" + memory_context
+        )
+
+    llm_messages: list[dict] = [{"role": "system", "content": system_content}]
 
     if context:
         llm_messages.append({

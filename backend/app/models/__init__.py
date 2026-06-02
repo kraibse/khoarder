@@ -7,6 +7,7 @@ from app.models.config import Config
 from app.models.origin_profile import OriginProfile
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.memory import Memory
 
 __all__ = [
     "Topic",
@@ -19,4 +20,5 @@ __all__ = [
     "OriginProfile",
     "Conversation",
     "Message",
+    "Memory",
 ]

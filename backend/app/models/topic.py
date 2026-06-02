@@ -25,3 +25,6 @@ class Topic(Base):
     conversations: Mapped[list["Conversation"]] = relationship(  # type: ignore[name-defined]
         "Conversation", back_populates="topic", lazy="select"
     )
+    memories: Mapped[list["Memory"]] = relationship(  # type: ignore[name-defined]
+        "Memory", back_populates="topic", lazy="select"
+    )
