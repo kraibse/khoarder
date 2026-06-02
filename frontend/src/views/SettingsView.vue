@@ -373,13 +373,13 @@ async function handleBlCheck() {
 
               <div class="flex items-center gap-3 pt-1">
                 <button
-                  class="rounded border border-line px-3 py-1.5 text-sm text-ink-2 hover:bg-surface-2 disabled:opacity-50"
+                  class="whitespace-nowrap rounded border border-line px-3 py-1.5 text-sm text-ink-2 hover:bg-surface-2 disabled:opacity-50"
                   :disabled="checkingHealth"
                   @click="handleHealthCheck"
                 >
                   {{ checkingHealth ? 'Checking…' : 'Test connection' }}
                 </button>
-                <span v-if="health" class="text-sm">
+                <span v-if="health" class="text-sm whitespace-nowrap">
                   <span v-if="health.reachable" class="text-green-600">Connected</span>
                   <span v-else class="text-danger">Unreachable</span>
                   <span v-if="health.model" class="text-ink-3"> · {{ health.model }}</span>
@@ -387,7 +387,7 @@ async function handleBlCheck() {
                 <button
                   v-if="health?.reachable && (!health.model || health.model !== health.configured_model)"
                   type="button"
-                  class="rounded bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+                  class="whitespace-nowrap rounded bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
                   :disabled="loadingModel || !config.llm_model"
                   @click="handleLoadModel"
                 >

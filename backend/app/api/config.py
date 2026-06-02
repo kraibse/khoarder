@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.schemas.config import BrowserlessStatusOut, CamoufoxStatusOut, ConfigOut, ConfigUpdate, HealthOut, ModelsOut, LoadModelRequest
+from app.schemas.config import BrowserlessStatusOut, CamoufoxStatusOut, ConfigOut, ConfigUpdate, HealthOut, ModelsOut, ModelInfo, LoadModelRequest
 from app.services import config as svc
 
 router = APIRouter(prefix="/config", tags=["config"])
