@@ -8,6 +8,10 @@ export interface ConversationOut {
   updated_at: string
 }
 
+export interface ConversationWithMessagesOut extends ConversationOut {
+  messages: MessageOut[]
+}
+
 export interface ConversationListOut {
   id: string
   topic_id: string | null
@@ -37,7 +41,7 @@ export async function listConversations(topicId?: string): Promise<ConversationL
   return apiFetch(`/conversations${query}`)
 }
 
-export async function getConversation(id: string): Promise<ConversationOut> {
+export async function getConversation(id: string): Promise<ConversationWithMessagesOut> {
   return apiFetch(`/conversations/${id}`)
 }
 

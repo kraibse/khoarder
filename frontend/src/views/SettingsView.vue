@@ -196,7 +196,7 @@ async function handleHealthCheck() {
   try {
     health.value = await checkHealth()
   } catch (e) {
-    health.value = { reachable: false, model: null, error: e instanceof Error ? e.message : 'Unknown error' }
+    health.value = { reachable: false, model: null, configured_model: null, error: e instanceof Error ? e.message : 'Unknown error' }
   } finally {
     checkingHealth.value = false
   }

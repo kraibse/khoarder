@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from datetime import datetime
 
+from app.schemas.message import MessageOut
+
 
 class ConversationCreate(BaseModel):
     topic_id: str | None = None
@@ -17,6 +19,12 @@ class ConversationOut(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationWithMessagesOut(ConversationOut):
+    messages: list[MessageOut] = []
 
     model_config = {"from_attributes": True}
 

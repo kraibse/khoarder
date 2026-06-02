@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ConversationListOut, ConversationOut, MessageOut } from '@/api/conversations'
+import type { ConversationListOut, ConversationOut, ConversationWithMessagesOut, MessageOut } from '@/api/conversations'
 import {
   createConversation,
   listConversations,
@@ -13,7 +13,7 @@ import {
 
 export const useConversationsStore = defineStore('conversations', () => {
   const conversations = ref<ConversationListOut[]>([])
-  const activeConversation = ref<ConversationOut | null>(null)
+  const activeConversation = ref<ConversationWithMessagesOut | null>(null)
   const messages = ref<MessageOut[]>([])
   const loading = ref(false)
   const sending = ref(false)

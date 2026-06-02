@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.schemas.conversation import ConversationCreate, ConversationOut, ConversationListOut, ConversationUpdate
+from app.schemas.conversation import ConversationCreate, ConversationOut, ConversationListOut, ConversationUpdate, ConversationWithMessagesOut
 from app.schemas.message import MessageOut, MessageCreate
 from app.services import chat as chat_svc
 
@@ -22,12 +22,20 @@ async def list_conversations(
     return await chat_svc.list_conversations(db, topic_id=topic_id)
 
 
-@router.get("/{conversation_id}", response_model=ConversationOut)
+@router.get("/{conversation_id}", response_model=ConversationWithMessagesOut)
 async def get_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)):
     conv = await chat_svc.get_conversation(db, conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return conv
+    messages = [MessageOut.model_validate(m) for m in conv.messages]
+    return ConversationWithMessagesOut(
+        id=conv.id,
+        topic_id=conv.topic_id,
+        title=conv.title,
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+        messages=messages,
+    )
 
 
 @router.patch("/{conversation_id}", response_model=ConversationOut)
