@@ -6,6 +6,7 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 import SkeletonCard from '@/components/atoms/SkeletonCard.vue'
 import { useTopicsStore } from '@/stores/topics'
 import { useConversationsStore } from '@/stores/conversations'
+import { useMemoriesStore } from '@/stores/memories'
 import { createEntryFromChat } from '@/api/conversations'
 import type { ConversationListOut } from '@/api/conversations'
 
@@ -13,6 +14,7 @@ const route = useRoute()
 const router = useRouter()
 const topicsStore = useTopicsStore()
 const convStore = useConversationsStore()
+const memStore = useMemoriesStore()
 
 const topicId = computed(() => {
   const t = route.params.topicId as string | undefined
@@ -23,15 +25,19 @@ const input = ref('')
 const scrollRef = ref<HTMLElement | null>(null)
 const editingTitle = ref<string | null>(null)
 const editTitleValue = ref('')
+const editingMemoryId = ref<string | null>(null)
+const editMemoryValue = ref('')
 
 onMounted(() => {
   convStore.loadConversations(topicId.value)
+  memStore.loadMemories(topicId.value)
 })
 
 watch(() => route.params.topicId, () => {
   convStore.loadConversations(topicId.value)
   convStore.activeConversation = null
   convStore.messages = []
+  memStore.loadMemories(topicId.value)
 })
 
 watch(() => convStore.messages.length, () => {
@@ -101,6 +107,31 @@ async function saveMessageAsEntry(msgId: string, type: string) {
   } catch (e) {
     alert(`Save failed: ${(e as Error).message}`)
   }
+}
+
+async function addMemoryFromMessage(content: string) {
+  try {
+    await memStore.addMemory(content, topicId.value, 'fact')
+  } catch (e) {
+    alert(`Add memory failed: ${(e as Error).message}`)
+  }
+}
+
+function startEditMemory(mem: { id: string; content: string }) {
+  editingMemoryId.value = mem.id
+  editMemoryValue.value = mem.content
+}
+
+async function saveEditMemory(memId: string) {
+  if (editMemoryValue.value.trim()) {
+    await memStore.editMemory(memId, { content: editMemoryValue.value.trim() })
+  }
+  editingMemoryId.value = null
+}
+
+async function handleDeleteMemory(memId: string) {
+  if (!confirm('Delete this memory?')) return
+  await memStore.removeMemory(memId)
 }
 </script>
 
@@ -211,7 +242,7 @@ async function saveMessageAsEntry(msgId: string, type: string) {
                   : 'bg-surface-3 text-ink rounded-bl-md border border-line'"
               >
                 <div class="whitespace-pre-wrap">{{ msg.content }}</div>
-                <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5">
+                <div v-if="msg.role === 'assistant' && !msg.id.startsWith('tmp-')" class="mt-2 flex items-center gap-1 border-t border-line pt-1.5 flex-wrap">
                   <button
                     type="button"
                     class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
@@ -225,6 +256,13 @@ async function saveMessageAsEntry(msgId: string, type: string) {
                     @click="saveMessageAsEntry(msg.id, 'Article')"
                   >
                     Save as article
+                  </button>
+                  <button
+                    type="button"
+                    class="text-[10px] px-2 py-0.5 rounded bg-surface-2 hover:bg-surface-3 text-ink-3 transition-colors"
+                    @click="addMemoryFromMessage(msg.content)"
+                  >
+                    Add memory
                   </button>
                 </div>
               </div>
@@ -255,6 +293,55 @@ async function saveMessageAsEntry(msgId: string, type: string) {
             >
               <AppIcon name="send" :size="14" />
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory sidebar -->
+      <div class="w-56 border-l border-line flex flex-col bg-surface flex-shrink-0">
+        <div class="px-3 py-3 border-b border-line flex items-center justify-between">
+          <div class="text-[11px] font-semibold tracking-[0.09em] uppercase text-ink-3">Memories</div>
+        </div>
+        <div class="flex-1 overflow-y-auto py-2 px-3 space-y-2">
+          <div
+            v-for="mem in memStore.memories"
+            :key="mem.id"
+            class="group relative px-2 py-1.5 rounded-md bg-surface-3 border border-line hover:border-accent transition-colors"
+          >
+            <div v-if="editingMemoryId === mem.id" class="flex items-center gap-1">
+              <input
+                v-model="editMemoryValue"
+                class="w-full text-[11px] bg-surface border border-line rounded px-1 py-0.5 outline-none focus:border-accent"
+                @keydown.enter="saveEditMemory(mem.id)"
+                @keydown.esc="editingMemoryId = null"
+                @blur="saveEditMemory(mem.id)"
+              />
+            </div>
+            <div v-else>
+              <div class="text-[11px] text-ink leading-snug">{{ mem.content }}</div>
+              <div class="mt-1 flex items-center justify-between">
+                <div class="text-[9px] text-ink-3 uppercase">{{ mem.type }}</div>
+                <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
+                  <button
+                    type="button"
+                    class="p-0.5 rounded hover:bg-surface-2 text-ink-3"
+                    @click="startEditMemory(mem)"
+                  >
+                    <AppIcon name="edit" :size="8" />
+                  </button>
+                  <button
+                    type="button"
+                    class="p-0.5 rounded hover:bg-danger-bg text-danger"
+                    @click="handleDeleteMemory(mem.id)"
+                  >
+                    <AppIcon name="trash" :size="8" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="memStore.memories.length === 0 && !memStore.loading" class="text-center text-ink-3 text-[11px] py-4">
+            No memories yet.
           </div>
         </div>
       </div>
