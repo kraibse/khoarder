@@ -6,12 +6,15 @@ import {
   getConfig,
   updateConfig,
   checkHealth,
+  listModels,
+  loadModel,
   checkCamoufoxStatus,
   checkFlaresolverrStatus,
   checkBrowserlessStatus,
   type ConfigOut,
   type ConfigUpdate,
   type HealthOut,
+  type ModelInfo,
   type CamoufoxStatusOut,
   type BrowserlessStatusOut,
 } from '@/api/config'
@@ -25,9 +28,13 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 const success = ref(false)
 
-// LM Studio health
+// LM Studio health & models
 const health = ref<HealthOut | null>(null)
 const checkingHealth = ref(false)
+const models = ref<ModelInfo[]>([])
+const loadingModels = ref(false)
+const loadingModel = ref(false)
+const loadModelError = ref<string | null>(null)
 
 // Camoufox status
 const cfStatus = ref<CamoufoxStatusOut | null>(null)
@@ -99,12 +106,42 @@ onMounted(async () => {
   try {
     config.value = await getConfig()
     original.value = snapshot(config.value)
+    await fetchModels()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load settings'
   } finally {
     loading.value = false
   }
 })
+
+async function fetchModels() {
+  loadingModels.value = true
+  try {
+    const res = await listModels()
+    models.value = res.models
+    loadModelError.value = res.error
+  } catch (e) {
+    models.value = []
+    loadModelError.value = e instanceof Error ? e.message : 'Failed to fetch models'
+  } finally {
+    loadingModels.value = false
+  }
+}
+
+async function handleLoadModel() {
+  if (!config.value?.llm_model) return
+  loadingModel.value = true
+  loadModelError.value = null
+  try {
+    await loadModel(config.value.llm_model)
+    await fetchModels()
+    await handleHealthCheck()
+  } catch (e) {
+    loadModelError.value = e instanceof Error ? e.message : 'Failed to load model'
+  } finally {
+    loadingModel.value = false
+  }
+}
 
 async function handleSave() {
   if (!config.value) return
@@ -275,12 +312,29 @@ async function handleBlCheck() {
               </div>
 
               <div>
-                <label class="mb-1 block text-sm text-ink-2">Model name</label>
-                <input
-                  v-model="config.llm_model"
-                  type="text"
-                  class="w-full rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
-                />
+                <label class="mb-1 block text-sm text-ink-2">Model</label>
+                <div class="flex items-center gap-2">
+                  <select
+                    v-model="config.llm_model"
+                    class="flex-1 rounded border border-line bg-surface-2 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                  >
+                    <option v-if="models.length === 0" :value="config.llm_model">
+                      {{ config.llm_model }}
+                    </option>
+                    <option v-for="m in models" :key="m.id" :value="m.id">
+                      {{ m.id }}{{ m.loaded ? ' (loaded)' : '' }}
+                    </option>
+                  </select>
+                  <button
+                    type="button"
+                    class="rounded border border-line px-3 py-2 text-sm text-ink-2 hover:bg-surface-2 disabled:opacity-50"
+                    :disabled="loadingModels"
+                    @click="fetchModels"
+                  >
+                    {{ loadingModels ? '…' : 'Refresh' }}
+                  </button>
+                </div>
+                <div v-if="loadModelError" class="mt-1 text-xs text-danger">{{ loadModelError }}</div>
               </div>
 
               <div class="grid grid-cols-3 gap-4">
@@ -330,7 +384,19 @@ async function handleBlCheck() {
                   <span v-else class="text-danger">Unreachable</span>
                   <span v-if="health.model" class="text-ink-3"> · {{ health.model }}</span>
                 </span>
+                <button
+                  v-if="health?.reachable && (!health.model || health.model !== health.configured_model)"
+                  type="button"
+                  class="rounded bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+                  :disabled="loadingModel || !config.llm_model"
+                  @click="handleLoadModel"
+                >
+                  {{ loadingModel ? 'Loading…' : 'Load model' }}
+                </button>
               </div>
+              <p v-if="health?.reachable && health.model && health.model !== health.configured_model" class="text-xs text-danger">
+                LM Studio has "{{ health.model }}" loaded, but "{{ health.configured_model }}" is configured.
+              </p>
               <p v-if="health?.error" class="text-xs text-danger">{{ health.error }}</p>
             </div>
           </section>

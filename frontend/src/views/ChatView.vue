@@ -252,6 +252,14 @@ async function handleDeleteMemory(memId: string) {
               <span class="w-1.5 h-1.5 rounded-full bg-danger" />
               Offline
             </div>
+            <div
+              v-else-if="llmReachable === true && !llmHealthModel"
+              class="text-[11px] text-danger flex items-center gap-1"
+              title="No model is loaded in LM Studio"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-danger" />
+              No model loaded
+            </div>
             <div v-if="convStore.sending" class="text-[11px] text-ink-3 flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
               Thinking...
@@ -306,7 +314,12 @@ async function handleDeleteMemory(memId: string) {
             </template>
 
             <div v-else class="flex items-center justify-center h-full text-ink-3 text-[13px]">
-              Select a conversation or start a new one.
+              <div class="text-center space-y-1">
+                <div>Select a conversation or start a new one.</div>
+                <div v-if="llmReachable === true && !llmHealthModel" class="text-danger text-[11px]">
+                  No model is loaded in LM Studio. Go to Settings to load a model.
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -325,7 +338,7 @@ async function handleDeleteMemory(memId: string) {
             <button
               type="button"
               class="p-2 rounded-lg bg-accent text-white hover:opacity-90 transition-opacity flex-shrink-0 disabled:opacity-40"
-              :disabled="!input.trim() || convStore.sending"
+              :disabled="!input.trim() || convStore.sending || (llmReachable === true && !llmHealthModel)"
               @click="handleSend"
             >
               <AppIcon name="send" :size="14" />

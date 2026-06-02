@@ -89,7 +89,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         id: `err-${Date.now()}`,
         conversation_id: conversationId,
         role: 'assistant',
-        content: `The LLM endpoint is not reachable. ${e.message || 'Please check your LM Studio configuration in Settings.'}`,
+        content: `LLM request failed: ${e.message || 'Please check that LM Studio is running and a model is loaded.'}`,
         created_at: new Date().toISOString(),
         entry_id: null,
       }

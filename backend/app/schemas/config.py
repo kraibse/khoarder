@@ -48,7 +48,22 @@ class ConfigUpdate(BaseModel):
 class HealthOut(BaseModel):
     reachable: bool
     model: str | None = None
+    configured_model: str | None = None
     error: str | None = None
+
+
+class ModelInfo(BaseModel):
+    id: str
+    loaded: bool = False
+
+
+class ModelsOut(BaseModel):
+    models: list[ModelInfo]
+    error: str | None = None
+
+
+class LoadModelRequest(BaseModel):
+    model: str
 
 
 class CamoufoxStatusOut(BaseModel):

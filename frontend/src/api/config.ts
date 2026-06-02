@@ -47,6 +47,17 @@ export interface ConfigUpdate {
 export interface HealthOut {
   reachable: boolean
   model: string | null
+  configured_model: string | null
+  error: string | null
+}
+
+export interface ModelInfo {
+  id: string
+  loaded: boolean
+}
+
+export interface ModelsOut {
+  models: ModelInfo[]
   error: string | null
 }
 
@@ -68,6 +79,14 @@ export const updateConfig = (data: ConfigUpdate) =>
   apiFetch<ConfigOut>('/config', { method: 'PUT', body: JSON.stringify(data) })
 
 export const checkHealth = () => apiFetch<HealthOut>('/config/health')
+
+export const listModels = () => apiFetch<ModelsOut>('/config/models')
+
+export const loadModel = (model: string) =>
+  apiFetch<{ status: string; model: string }>('/config/load-model', {
+    method: 'POST',
+    body: JSON.stringify({ model }),
+  })
 
 export const checkCamoufoxStatus = () => apiFetch<CamoufoxStatusOut>('/config/camoufox-status')
 

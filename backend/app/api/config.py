@@ -1,11 +1,11 @@
 import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.schemas.config import BrowserlessStatusOut, CamoufoxStatusOut, ConfigOut, ConfigUpdate, HealthOut
+from app.schemas.config import BrowserlessStatusOut, CamoufoxStatusOut, ConfigOut, ConfigUpdate, HealthOut, ModelsOut, LoadModelRequest
 from app.services import config as svc
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -87,9 +87,13 @@ async def update_config(body: ConfigUpdate, db: AsyncSession = Depends(get_db)):
 @router.get("/health", response_model=HealthOut)
 async def health_check(db: AsyncSession = Depends(get_db)):
     base_url = await svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
-    model = await svc.get_config_value(db, "llm_model", default=settings.llm_model)
+    configured_model = await svc.get_config_value(db, "llm_model", default=settings.llm_model)
     if not base_url.strip():
-        return HealthOut(reachable=False, error="LLM Studio is not configured. Set the base URL in Settings.")
+        return HealthOut(
+            reachable=False,
+            configured_model=configured_model,
+            error="LLM Studio is not configured. Set the base URL in Settings.",
+        )
     try:
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
@@ -97,11 +101,81 @@ async def health_check(db: AsyncSession = Depends(get_db)):
             if resp.status_code == 200:
                 data = resp.json()
                 models = data.get("data", [])
-                model_name = models[0].get("id") if models else None
-                return HealthOut(reachable=True, model=model_name or model)
-            return HealthOut(reachable=False, error=f"LM Studio returned status {resp.status_code}")
+                loaded_model = models[0].get("id") if models else None
+                return HealthOut(
+                    reachable=True,
+                    model=loaded_model or configured_model,
+                    configured_model=configured_model,
+                )
+            return HealthOut(
+                reachable=False,
+                configured_model=configured_model,
+                error=f"LM Studio returned status {resp.status_code}",
+            )
     except Exception as exc:
-        return HealthOut(reachable=False, error=str(exc))
+        return HealthOut(reachable=False, configured_model=configured_model, error=str(exc))
+
+
+@router.get("/models", response_model=ModelsOut)
+async def list_models(db: AsyncSession = Depends(get_db)):
+    base_url = await svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
+    if not base_url.strip():
+        return ModelsOut(models=[], error="LLM Studio is not configured.")
+    mgmt_base = base_url.rstrip("/")
+    if mgmt_base.endswith("/v1"):
+        mgmt_base = mgmt_base[:-3]
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            # Try LM Studio management API first for richer info
+            try:
+                mgmt_resp = await client.get(mgmt_base + "/api/v0/models")
+                if mgmt_resp.status_code == 200:
+                    data = mgmt_resp.json()
+                    models = data.get("data", [])
+                    return ModelsOut(
+                        models=[
+                            ModelInfo(id=m.get("id", m.get("path", "unknown")), loaded=m.get("loaded", False))
+                            for m in models
+                        ]
+                    )
+            except Exception:
+                pass
+            # Fallback to OpenAI-compatible endpoint
+            resp = await client.get(base_url.rstrip("/") + "/models")
+            if resp.status_code == 200:
+                data = resp.json()
+                models = data.get("data", [])
+                return ModelsOut(
+                    models=[ModelInfo(id=m.get("id", "unknown"), loaded=True) for m in models]
+                )
+            return ModelsOut(models=[], error=f"HTTP {resp.status_code}")
+    except Exception as exc:
+        return ModelsOut(models=[], error=str(exc))
+
+
+@router.post("/load-model", status_code=202)
+async def load_model(body: LoadModelRequest, db: AsyncSession = Depends(get_db)):
+    base_url = await svc.get_config_value(db, "llm_base_url", default=settings.llm_base_url)
+    if not base_url.strip():
+        raise HTTPException(status_code=503, detail="LLM Studio is not configured.")
+    mgmt_base = base_url.rstrip("/")
+    if mgmt_base.endswith("/v1"):
+        mgmt_base = mgmt_base[:-3]
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                mgmt_base + "/api/v0/models/load",
+                json={"model": body.model},
+            )
+            if resp.status_code in (200, 202):
+                return {"status": "loading", "model": body.model}
+            raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @router.get("/camoufox-status", response_model=CamoufoxStatusOut)
