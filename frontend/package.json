@@ -31,5 +31,8 @@
     "vite": "^6.0.11",
     "vitest": "^3.0.0",
     "vue-tsc": "^2.2.0"
+  },
+  "pnpm": {
+    "approve-builds": ["esbuild", "vue-demi"]
   }
 }

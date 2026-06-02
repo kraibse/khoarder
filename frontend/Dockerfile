@@ -1,16 +1,12 @@
 # ── Stage 1: Build ────────────────────────────────────────────
 FROM node:22-alpine AS build
 
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
-
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package.json ./
+RUN npm install
 
 COPY . .
-RUN pnpm run build
+RUN npm run build
 
 # ── Stage 2: Serve ────────────────────────────────────────────
 FROM nginx:alpine AS prod
@@ -24,13 +20,9 @@ CMD ["nginx", "-g", "daemon off;"]
 # ── Dev stage (used by docker-compose.dev.yml) ────────────────
 FROM node:22-alpine AS dev
 
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
-
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install
+COPY package.json ./
+RUN npm install
 COPY . .
 EXPOSE 5173
-CMD ["pnpm", "dev", "--host"]
+CMD ["npm", "run", "dev", "--", "--host"]
